@@ -1,4 +1,4 @@
-// Helper natif de 10lexX pour les appels :
+// Helper natif de Sténo pour les appels :
 //   detect             écrit (en JSON, sur stdout) les apps qui utilisent le micro ou la sortie audio
 //   record --out <dir> enregistre le micro (mic.wav) et tout le son du Mac (system.wav)
 //                      avec --mic-only, seulement le micro (dictée)
@@ -189,7 +189,7 @@ final class TrackWriter {
 // Tap Core Audio sur tout le son joué par le Mac (macOS 14.2+), lu via un aggregate device privé
 final class SystemAudioCapture {
     private let writer: TrackWriter
-    private let queue = DispatchQueue(label: "com.devify.10lexx.recorder.system")
+    private let queue = DispatchQueue(label: "com.devify.steno.recorder.system")
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var deviceID = AudioObjectID(kAudioObjectUnknown)
     private var ioProcID: AudioDeviceIOProcID?
@@ -200,7 +200,7 @@ final class SystemAudioCapture {
 
     func start() throws {
         let description = CATapDescription()
-        description.name = "10lexX"
+        description.name = "Sténo"
         description.uuid = UUID()
         // Liste d'exclusion vide : tous les processus
         description.processes = []
@@ -217,8 +217,8 @@ final class SystemAudioCapture {
         try check(withUnsafeMutablePointer(to: &tapUID) { AudioObjectGetPropertyData(tapID, &addr, 0, nil, &size, $0) }, "lecture du tap audio")
 
         let aggregate: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "10lexX",
-            kAudioAggregateDeviceUIDKey: "com.devify.10lexx.recorder.\(UUID().uuidString)",
+            kAudioAggregateDeviceNameKey: "Sténo",
+            kAudioAggregateDeviceUIDKey: "com.devify.steno.recorder.\(UUID().uuidString)",
             kAudioAggregateDeviceSubDeviceListKey: [],
             kAudioAggregateDeviceTapListKey: [[kAudioSubTapUIDKey: tapUID! as String]],
             kAudioAggregateDeviceTapAutoStartKey: false,
@@ -353,7 +353,7 @@ func handleKeyEvent(type: CGEventType, event: CGEvent) {
 func runHotkey() -> Never {
     // macOS affiche la demande de permission « Surveillance de l'entrée » la première fois
     guard CGPreflightListenEventAccess() || CGRequestListenEventAccess() else {
-        fail("Permission « Surveillance de l'entrée » manquante pour 10lexx-recorder")
+        fail("Permission « Surveillance de l'entrée » manquante pour steno-recorder")
     }
 
     let events = CGEventMask(1 << CGEventType.flagsChanged.rawValue) | CGEventMask(1 << CGEventType.keyDown.rawValue)
@@ -381,5 +381,5 @@ case "record":
 case "hotkey":
     runHotkey()
 default:
-    fail("usage : 10lexx-recorder detect | record --out <dossier> [--mic-only] | hotkey")
+    fail("usage : steno-recorder detect | record --out <dossier> [--mic-only] | hotkey")
 }

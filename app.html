@@ -3,7 +3,7 @@
     <head>
         <meta charset="UTF-8" />
         <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; media-src 'self' file:" />
-        <title>10lexX</title>
+        <title>Sténo</title>
         <style>
             :root {
                 --window: #f3f2ef;
@@ -507,8 +507,8 @@
 
         <aside class="sidebar">
             <div class="logo">
-                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h9M3 10h6M3 15h5" /><path d="M11 14l2.5 2.5L18 11" /></svg>
-                10lexX
+                <svg viewBox="0 0 54 50" fill="none" stroke="#c96d4e" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10C6.5 6.93 8.89 4 11.67 4C14.44 4 16.83 6.93 19.33 10C21.83 13.07 24.23 16 27 16C29.77 16 32.17 13.07 34.67 10C37.17 6.93 39.56 4 42.33 4C45.11 4 47.5 6.93 50 10" /><path d="M4 30H50M4 46H32" /></svg>
+                Sténo
             </div>
             <button class="nav-item" data-page="corrections">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h11M4 11h8M4 16h6" /><path d="M13.5 17.5l2.5 2.5 5-5.5" /></svg>
@@ -852,7 +852,7 @@
 
                 const message =
                     status.error === "permission"
-                        ? "10lexX n'a pas accès aux mémos de Dictaphone. Donne l'Accès complet au disque à l'app qui lance 10lexX (iTerm), dans Réglages Système › Confidentialité et sécurité, puis relance-la."
+                        ? "Sténo n'a pas accès aux mémos de Dictaphone. Donne l'Accès complet au disque à l'app qui lance Sténo (iTerm), dans Réglages Système › Confidentialité et sécurité, puis relance-la."
                         : `Impossible de lire les mémos de Dictaphone : ${status.error}`;
                 notice.append(el("div", "notice", message));
             }

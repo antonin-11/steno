@@ -6,7 +6,7 @@ const readline = require("readline");
 const { spawn, execFile } = require("child_process");
 const { transcribe, transcriptionCost } = require("./gateway-transcription");
 
-const RECORDER = path.join(__dirname, "bin", "10lexx-recorder");
+const RECORDER = path.join(__dirname, "bin", "steno-recorder");
 // Rend le helper responsable de ses propres permissions macOS (micro, surveillance du clavier)
 const DISCLAIM_EXEC = path.join(__dirname, "bin", "disclaim-exec");
 
@@ -49,7 +49,7 @@ function watchDictation({ model, getPhrases, getLanguage, tryBegin, end, showOve
         // Une correction ou une autre dictée est déjà en cours
         if (recording || !tryBegin()) return;
 
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "10lexx-dictee-"));
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "steno-dictee-"));
         const child = spawn(DISCLAIM_EXEC, [RECORDER, "record", "--mic-only", "--out", dir]);
         recording = {
             child,

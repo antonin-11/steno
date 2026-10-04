@@ -1,4 +1,4 @@
 allowBuilds:
-  electron: set this to true or false
+  electron: true
 onlyBuiltDependencies:
   - electron

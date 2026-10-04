@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Sténo</title>
+  <defs>
+    <!-- Forme des icônes macOS : carré de 824 px à coins continus, centré dans 1024 px -->
+    <path id="forme" d="M383.41 100L640.59 100C722.19 100 763 104.12 799.79 112.14L806.92 113.89C854.88 131.34 892.66 169.12 910.11 217.08L911.86 224.21C919.88 261 924 301.81 924 383.41L924 640.59C924 722.19 919.88 763 911.86 799.79L910.11 806.92C892.66 854.88 854.88 892.66 806.92 910.11L799.79 911.86C763 919.88 722.19 924 640.59 924L383.41 924C301.81 924 261 919.88 224.21 911.86L217.08 910.11C169.12 892.66 131.34 854.88 113.89 806.92L112.14 799.79C104.12 763 100 722.19 100 640.59L100 383.41C100 301.81 104.12 261 112.14 224.21L113.89 217.08C131.34 169.12 169.12 131.34 217.08 113.89L224.21 112.14C261 104.12 301.81 100 383.41 100Z"/>
+    <path id="onde" d="M303.53 384.28C326.18 356.44 347.87 329.9 373.02 329.9C398.17 329.9 419.86 356.44 442.51 384.28C465.16 412.12 486.85 438.66 512 438.66C537.15 438.66 558.84 412.12 581.49 384.28C604.14 356.44 625.83 329.9 650.98 329.9C676.13 329.9 697.82 356.44 720.47 384.28"/>
+    <path id="lignes" d="M303.53 565.56H720.47M303.53 710.58H557.32"/>
+    <clipPath id="interieur"><use href="#forme"/></clipPath>
+
+    <linearGradient id="fond" x1="0" y1="100" x2="0" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.5" stop-color="#f7f6f4"/>
+      <stop offset="1" stop-color="#ebeae6"/>
+    </linearGradient>
+    <linearGradient id="couleur" x1="0" y1="302.7" x2="0" y2="746.84" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#cb7355"/>
+      <stop offset="1" stop-color="#c36a4c"/>
+    </linearGradient>
+
+    <filter id="ombre-icone" x="-10%" y="-10%" width="120%" height="125%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="10"/>
+      <feOffset dy="6"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.08"/></feComponentTransfer>
+    </filter>
+    <filter id="flou-bord" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="3"/></filter>
+    <filter id="ombre-trait" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024"><feGaussianBlur stdDeviation="7.25"/></filter>
+    <filter id="flou-liseret" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024"><feGaussianBlur stdDeviation="1.6"/></filter>
+
+    <!-- Liseré des traits : un anneau clair tout autour, qui s'estompe vers l'intérieur -->
+    <mask id="liseret-tour" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <g stroke="#fff" stroke-width="72.51"><use href="#onde"/><use href="#lignes"/></g>
+        <g stroke="#000" stroke-width="60.91" filter="url(#flou-liseret)"><use href="#onde"/><use href="#lignes"/></g>
+      </g>
+    </mask>
+    <!-- ... renforcé en haut à gauche, du côté de la lumière -->
+    <mask id="liseret-lumiere" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="72.51">
+        <g stroke="#fff"><use href="#onde"/><use href="#lignes"/></g>
+        <g stroke="#000" transform="translate(2.9 5.8)" filter="url(#flou-liseret)"><use href="#onde"/><use href="#lignes"/></g>
+      </g>
+    </mask>
+  </defs>
+
+  <!-- Fond : ombre portée légère, dégradé, bord blanc et contour à peine visible -->
+  <use href="#forme" fill="#000" filter="url(#ombre-icone)"/>
+  <use href="#forme" fill="url(#fond)"/>
+  <g clip-path="url(#interieur)" fill="none" stroke="#fff">
+    <use href="#forme" stroke-width="24.72" filter="url(#flou-bord)"/>
+    <use href="#forme" stroke-width="18.13"/>
+  </g>
+  <use href="#forme" fill="none" stroke="#000" stroke-opacity="0.045" stroke-width="2"/>
+
+  <!-- Logo : ombre douce, traits terracotta, puis liseré -->
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="72.51">
+    <g stroke="#834733" stroke-opacity="0.08" transform="translate(0 6.53)" filter="url(#ombre-trait)"><use href="#onde"/><use href="#lignes"/></g>
+    <g stroke="url(#couleur)"><use href="#onde"/><use href="#lignes"/></g>
+  </g>
+  <rect width="1024" height="1024" fill="#ce7a5e" mask="url(#liseret-tour)"/>
+  <rect width="1024" height="1024" fill="#d48a71" mask="url(#liseret-lumiere)"/>
+</svg>

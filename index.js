@@ -9,6 +9,10 @@ const { watchCalls } = require("./call-detector");
 const { createMeetings } = require("./meetings");
 const { createRecordingIndicator } = require("./recording-indicator");
 const { watchDictation } = require("./dictation");
+
+// Les données (historique, dictionnaire, réunions) restent dans le dossier créé sous l'ancien nom de l'app
+app.setPath("userData", path.join(app.getPath("appData"), "spell-check-electron"));
+
 const model = "deepseek/deepseek-v4-flash";
 // Modèle utilisé pour les mémos vocaux sans transcription Apple
 const transcriptionModel = "openai/gpt-4o-mini-transcribe";
@@ -254,7 +258,7 @@ function createMainWindow() {
         height: 760,
         minWidth: 760,
         minHeight: 400,
-        title: "10lexX",
+        title: "Sténo",
         titleBarStyle: "hiddenInset",
         backgroundColor: "#f3f2ef",
         webPreferences: {
@@ -382,6 +386,11 @@ ipcMain.handle("get-dictation-language", () => readSettings().dictationLanguage 
 ipcMain.handle("set-dictation-language", (_event, language) => updateSettings({ dictationLanguage: language }));
 
 app.whenReady().then(() => {
+    // Lancée avec `electron .`, l'app afficherait l'icône d'Electron dans le Dock
+    if (process.platform === "darwin") {
+        app.dock.setIcon(path.join(__dirname, "brand", "icon", "png", "steno-icon-1024.png"));
+    }
+
     createOverlay();
     createMainWindow();
 

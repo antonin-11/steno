@@ -1,4 +1,4 @@
-# Correcteur Orthographique Automatique
+# Sténo
 
 Un outil de bureau qui corrige automatiquement vos textes en français à l'aide de l'API OpenAI.
 

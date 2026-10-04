@@ -69,7 +69,7 @@ function readAppleTranscript(file) {
 
 // Convertit le mémo (.qta ou .m4a) en .m4a AAC simple, accepté par les modèles de transcription
 async function convertToM4a(file) {
-    const output = path.join(os.tmpdir(), `10lexx-${path.basename(file, path.extname(file))}.m4a`);
+    const output = path.join(os.tmpdir(), `steno-${path.basename(file, path.extname(file))}.m4a`);
     await run("avconvert", ["--source", file, "--preset", "PresetAppleM4A", "--output", output, "--replace"]);
     return output;
 }

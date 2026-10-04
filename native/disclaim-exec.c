@@ -1,7 +1,7 @@
 /*
  * Lance un programme en le rendant responsable de ses propres permissions macOS (TCC).
  *
- * Sans ça, le helper hérite du processus qui a lancé 10lexX (node via launchd, ou le terminal) :
+ * Sans ça, le helper hérite du processus qui a lancé Sténo (node via launchd, ou le terminal) :
  * macOS lirait les textes de permission de ce processus, qui ne les a pas, au lieu de ceux du helper.
  *
  * Repris d'OpenWhispr (licence MIT, Copyright (c) 2024 OpenWhispr Team) :

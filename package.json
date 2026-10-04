@@ -1,10 +1,12 @@
 {
-    "name": "spell-check-electron",
+    "name": "steno",
+    "productName": "Sténo",
     "version": "1.0.0",
     "main": "index.js",
     "scripts": {
         "dev": "electron .",
-        "build:native": "sh scripts/build-native.sh"
+        "build:native": "sh scripts/build-native.sh",
+        "build:brand": "electron scripts/build-brand.js"
     },
     "dependencies": {
         "dotenv": "^16.4.7",

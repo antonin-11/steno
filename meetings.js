@@ -6,7 +6,7 @@ const { pathToFileURL } = require("url");
 const { spawn, execFile } = require("child_process");
 const { transcribe, transcriptionCost } = require("./gateway-transcription");
 
-const RECORDER = path.join(__dirname, "bin", "10lexx-recorder");
+const RECORDER = path.join(__dirname, "bin", "steno-recorder");
 // Rend le helper responsable de ses propres permissions macOS (micro, son système)
 const DISCLAIM_EXEC = path.join(__dirname, "bin", "disclaim-exec");
 

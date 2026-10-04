@@ -3,7 +3,7 @@ const path = require("path");
 const readline = require("readline");
 const { spawn, execFile } = require("child_process");
 
-const RECORDER = path.join(__dirname, "bin", "10lexx-recorder");
+const RECORDER = path.join(__dirname, "bin", "steno-recorder");
 
 // L'app doit utiliser le micro depuis ce délai pour qu'on considère qu'un appel a commencé
 const START_DELAY_MS = 5000;

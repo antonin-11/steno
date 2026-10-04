@@ -3,12 +3,12 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.devify.10lexx.recorder</string>
+    <string>com.devify.steno.recorder</string>
     <key>CFBundleName</key>
-    <string>10lexX Recorder</string>
+    <string>Sténo Recorder</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>10lexX enregistre ton micro pendant les appels pour les transcrire.</string>
+    <string>Sténo enregistre ton micro pendant les appels pour les transcrire.</string>
     <key>NSAudioCaptureUsageDescription</key>
-    <string>10lexX enregistre le son des autres participants pendant les appels pour les transcrire.</string>
+    <string>Sténo enregistre le son des autres participants pendant les appels pour les transcrire.</string>
 </dict>
 </plist>
