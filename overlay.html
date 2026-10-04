@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8" />
+        <style>
+            html,
+            body {
+                margin: 0;
+                height: 100%;
+                background: transparent;
+                overflow: hidden;
+            }
+
+            body {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .pill {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                height: 34px;
+                min-width: 34px;
+                padding: 0 14px;
+                box-sizing: border-box;
+                border-radius: 17px;
+                background: rgba(18, 18, 18, 0.92);
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                opacity: 0;
+                transform: translateY(8px) scale(0.9);
+                transition: opacity 0.18s ease, transform 0.18s ease;
+            }
+
+            body.visible .pill {
+                opacity: 1;
+                transform: none;
+            }
+
+            /* Lettres qui défilent pendant la correction */
+            .letters {
+                display: flex;
+                font-family: "SF Mono", Menlo, monospace;
+                font-size: 12px;
+                color: rgba(255, 255, 255, 0.85);
+            }
+
+            /* Chaque lettre a sa case : l'ancienne sort par le bas, la nouvelle entre par le haut */
+            .slot {
+                position: relative;
+                width: 1ch;
+                height: 16px;
+                overflow: hidden;
+            }
+
+            .char {
+                position: absolute;
+                inset: 0;
+                text-align: center;
+                line-height: 16px;
+            }
+
+            .icon {
+                display: none;
+                width: 16px;
+                height: 16px;
+            }
+
+            body.done .letters,
+            body.error .letters,
+            body.listening .letters {
+                display: none;
+            }
+
+            /* Barres qui suivent la voix pendant la dictée */
+            .bars {
+                display: none;
+                align-items: center;
+                gap: 2px;
+                height: 14px;
+            }
+
+            body.listening .bars {
+                display: flex;
+            }
+
+            .bars i {
+                width: 2px;
+                height: 14px;
+                border-radius: 1px;
+                background: rgba(255, 255, 255, 0.85);
+                transform: scaleY(0.15);
+                transition: transform 0.1s linear;
+            }
+
+            body.done .icon.ok {
+                display: block;
+                color: #4ade80;
+            }
+
+            body.error .icon.err {
+                display: block;
+                color: #f87171;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="pill">
+            <div class="letters"></div>
+            <div class="bars"><i></i><i></i><i></i><i></i></div>
+            <svg class="icon ok" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 8.5l3.2 3L13 4.5" />
+            </svg>
+            <svg class="icon err" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+                <path d="M4 4l8 8M12 4l-8 8" />
+            </svg>
+        </div>
+        <script>
+            const LETTER_COUNT = 6;
+            const ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+            // Durée du remplacement d'une lettre, et décalage avant de lancer la suivante
+            const SWAP_DURATION = 320;
+            const STEP_DELAY = 160;
+
+            const letters = document.querySelector(".letters");
+            const slots = [];
+            let cycleId = 0;
+
+            function randomLetter() {
+                return ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
+            }
+
+            function createChar() {
+                const char = document.createElement("span");
+                char.className = "char";
+                char.textContent = randomLetter();
+                return char;
+            }
+
+            for (let i = 0; i < LETTER_COUNT; i++) {
+                const slot = document.createElement("span");
+                slot.className = "slot";
+                slot.appendChild(createChar());
+                letters.appendChild(slot);
+                slots.push(slot);
+            }
+
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+            // Fait sortir la lettre actuelle par le bas et entrer une nouvelle par le haut
+            function swap(slot) {
+                const oldChar = slot.lastElementChild;
+                const newChar = createChar();
+                slot.appendChild(newChar);
+
+                const options = { duration: SWAP_DURATION, easing: "cubic-bezier(0.4, 0, 0.2, 1)", fill: "forwards" };
+                oldChar
+                    .animate([{ transform: "translateY(0)", opacity: 1 }, { transform: "translateY(100%)", opacity: 0 }], options)
+                    .finished.then(() => oldChar.remove());
+                return newChar.animate([{ transform: "translateY(-100%)", opacity: 0 }, { transform: "translateY(0)", opacity: 1 }], options)
+                    .finished;
+            }
+
+            // Cascade de gauche à droite ; le cycle suivant attend que la dernière lettre ait fini
+            async function runCycle(id) {
+                while (id === cycleId) {
+                    const swaps = [];
+                    for (const slot of slots) {
+                        if (id !== cycleId) return;
+                        swaps.push(swap(slot));
+                        await wait(STEP_DELAY);
+                    }
+                    await Promise.all(swaps);
+                }
+            }
+
+            const bars = [...document.querySelectorAll(".bars i")];
+            // Les barres du milieu montent plus haut que celles du bord
+            const BAR_SCALES = [0.6, 1, 0.85, 0.5];
+
+            // Appelé depuis le process principal pendant la dictée, avec un niveau entre 0 et 1
+            window.setLevel = (level) => {
+                bars.forEach((bar, i) => (bar.style.transform = `scaleY(${Math.max(0.15, level * BAR_SCALES[i])})`));
+            };
+
+            // Appelé depuis le process principal : "listening", "loading", "done", "error" ou "hidden"
+            window.setState = (state) => {
+                document.body.className = state === "hidden" ? "" : `visible ${state}`;
+                if (state === "listening") window.setLevel(0);
+
+                cycleId++;
+                if (state === "loading") {
+                    runCycle(cycleId);
+                }
+            };
+        </script>
+    </body>
+</html>
