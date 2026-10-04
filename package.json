@@ -6,13 +6,47 @@
     "scripts": {
         "dev": "electron .",
         "build:native": "sh scripts/build-native.sh",
-        "build:brand": "electron scripts/build-brand.js"
+        "build:brand": "electron scripts/build-brand.js",
+        "package": "sh scripts/package.sh",
+        "release": "sh scripts/release.sh"
     },
     "dependencies": {
         "dotenv": "^16.4.7",
-        "electron": "^33.2.1",
         "node-key-sender": "^1.0.11",
         "node-notifier": "^10.0.1",
         "openai": "^4.77.0"
+    },
+    "devDependencies": {
+        "electron": "^33.2.1",
+        "electron-builder": "^26.15.3"
+    },
+    "build": {
+        "appId": "com.devify.steno",
+        "electronDist": "node_modules/electron/dist",
+        "npmRebuild": false,
+        "directories": {
+            "output": "dist"
+        },
+        "files": [
+            "*.js",
+            "*.html"
+        ],
+        "extraResources": [
+            {
+                "from": "bin/steno-recorder",
+                "to": "bin/steno-recorder"
+            }
+        ],
+        "mac": {
+            "target": "dir",
+            "icon": "brand/icon/steno-icon.icns",
+            "hardenedRuntime": false,
+            "notarize": false,
+            "extendInfo": {
+                "NSMicrophoneUsageDescription": "Sténo enregistre ton micro pour la dictée et pendant les appels, pour les transcrire.",
+                "NSAudioCaptureUsageDescription": "Sténo enregistre le son des autres participants pendant les appels pour les transcrire.",
+                "NSAppleEventsUsageDescription": "Sténo passe par System Events pour coller le texte, et lit l'adresse des onglets de ton navigateur pour repérer un appel Google Meet, Teams ou Slack."
+            }
+        }
     }
 }

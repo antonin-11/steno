@@ -17,4 +17,6 @@ contextBridge.exposeInMainWorld("tenlex", {
     onMeetingsUpdated: (callback) => ipcRenderer.on("meetings-updated", (_event, meetings) => callback(meetings)),
     getDictationLanguage: () => ipcRenderer.invoke("get-dictation-language"),
     setDictationLanguage: (language) => ipcRenderer.invoke("set-dictation-language", language),
+    getCorrectionInstructions: () => ipcRenderer.invoke("get-correction-instructions"),
+    setCorrectionInstructions: (instructions) => ipcRenderer.invoke("set-correction-instructions", instructions),
 });

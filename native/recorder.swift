@@ -2,10 +2,14 @@
 //   detect             écrit (en JSON, sur stdout) les apps qui utilisent le micro ou la sortie audio
 //   record --out <dir> enregistre le micro (mic.wav) et tout le son du Mac (system.wav)
 //                      avec --mic-only, seulement le micro (dictée)
-//   hotkey             écrit les appuis et relâchements d'Option droite (dictée)
+//   hotkey             écrit le début (Option droite + Cmd droite enfoncées) et la fin (l'une relâchée) de la dictée
+//   paste              simule Cmd+V dans l'application active
+//
+// hotkey et paste n'ont besoin que de la permission « Accessibilité »
 //
 // Inspiré d'OpenWhispr (licence MIT) : resources/macos-mic-listener.swift et resources/macos-audio-tap.swift
 
+import ApplicationServices
 import AVFoundation
 import CoreAudio
 import Foundation
@@ -323,26 +327,23 @@ func runRecord(outputDir: URL, micOnly: Bool) -> Never {
 
 // ---------- hotkey ----------
 
-// Option droite : touche 61, avec son propre bit dans les flags (NX_DEVICERALTKEYMASK)
-let rightOptionKeyCode: Int64 = 61
+// Option droite et Cmd droite, chacune avec son propre bit dans les flags (NX_DEVICERALTKEYMASK, NX_DEVICERCMDKEYMASK)
 let rightOptionMask: UInt64 = 0x40
+let rightCommandMask: UInt64 = 0x10
 
 var hotkeyTap: CFMachPort?
-var rightOptionDown = false
-var cancelSent = false
+var dictating = false
 
+// La dictée démarre quand Option droite et Cmd droite sont enfoncées ensemble, et s'arrête dès qu'on en relâche une.
+// Une seule des deux ne fait rien : Option sert à taper des caractères, Cmd aux raccourcis
 func handleKeyEvent(type: CGEventType, event: CGEvent) {
     switch type {
-    case .flagsChanged where event.getIntegerValueField(.keyboardEventKeycode) == rightOptionKeyCode:
-        let down = event.flags.rawValue & rightOptionMask != 0
-        guard down != rightOptionDown else { return }
-        rightOptionDown = down
-        cancelSent = false
-        emit(["type": down ? "down" : "up"])
-    case .keyDown where rightOptionDown && !cancelSent:
-        // Option droite sert aussi à taper des caractères (⌥ + touche) : ce n'est pas une dictée
-        cancelSent = true
-        emit(["type": "cancel"])
+    case .flagsChanged:
+        let flags = event.flags.rawValue
+        let held = flags & rightOptionMask != 0 && flags & rightCommandMask != 0
+        guard held != dictating else { return }
+        dictating = held
+        emit(["type": held ? "down" : "up"])
     case .tapDisabledByTimeout, .tapDisabledByUserInput:
         if let hotkeyTap { CGEvent.tapEnable(tap: hotkeyTap, enable: true) }
     default:
@@ -350,14 +351,22 @@ func handleKeyEvent(type: CGEventType, event: CGEvent) {
     }
 }
 
-func runHotkey() -> Never {
-    // macOS affiche la demande de permission « Surveillance de l'entrée » la première fois
-    guard CGPreflightListenEventAccess() || CGRequestListenEventAccess() else {
-        fail("Permission « Surveillance de l'entrée » manquante pour steno-recorder")
+// Une seule permission pour écouter le raccourci et coller : macOS affiche la demande la première fois
+func requireAccessibility() {
+    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+    guard AXIsProcessTrustedWithOptions(options) else {
+        fail("Permission « Accessibilité » manquante pour steno-recorder")
     }
+}
 
-    let events = CGEventMask(1 << CGEventType.flagsChanged.rawValue) | CGEventMask(1 << CGEventType.keyDown.rawValue)
-    hotkeyTap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly, eventsOfInterest: events, callback: { _, type, event, _ in
+func runHotkey() -> Never {
+    requireAccessibility()
+
+    // Tap actif : avec l'Accessibilité seule, macOS lui transmet les touches de modification
+    // (les autres touches demanderaient en plus « Surveillance de l'entrée »).
+    // Les événements sont rendus tels quels, le callback doit rester instantané pour ne pas ralentir le clavier
+    let events = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
+    hotkeyTap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: events, callback: { _, type, event, _ in
         handleKeyEvent(type: type, event: event)
         return Unmanaged.passUnretained(event)
     }, userInfo: nil)
@@ -366,6 +375,27 @@ func runHotkey() -> Never {
     CFRunLoopAddSource(CFRunLoopGetMain(), CFMachPortCreateRunLoopSource(nil, hotkeyTap, 0), .commonModes)
     CGEvent.tapEnable(tap: hotkeyTap, enable: true)
     CFRunLoopRun()
+    exit(0)
+}
+
+// ---------- paste ----------
+
+// Touche V (kVK_ANSI_V), à la même place en AZERTY et en QWERTY
+let vKeyCode: CGKeyCode = 9
+
+func runPaste() -> Never {
+    requireAccessibility()
+
+    let source = CGEventSource(stateID: .combinedSessionState)
+    guard let down = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true),
+          let up = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false) else {
+        fail("Impossible de créer l'appui sur Cmd+V")
+    }
+    // Seulement Cmd : une touche de modification encore enfoncée ne doit pas changer le raccourci
+    down.flags = .maskCommand
+    up.flags = .maskCommand
+    down.post(tap: .cghidEventTap)
+    up.post(tap: .cghidEventTap)
     exit(0)
 }
 
@@ -380,6 +410,8 @@ case "record":
     runRecord(outputDir: URL(fileURLWithPath: arguments[index + 1]), micOnly: arguments.contains("--mic-only"))
 case "hotkey":
     runHotkey()
+case "paste":
+    runPaste()
 default:
-    fail("usage : steno-recorder detect | record --out <dossier> [--mic-only] | hotkey")
+    fail("usage : steno-recorder detect | record --out <dossier> [--mic-only] | hotkey | paste")
 }

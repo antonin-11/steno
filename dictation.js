@@ -1,14 +1,11 @@
-// Dictée : on maintient Option droite, on parle, on relâche ; le texte transcrit est collé là où est le curseur
+// Dictée : on maintient Option droite + Cmd droite, on parle, on relâche ; le texte transcrit est collé là où est le curseur
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const readline = require("readline");
 const { spawn, execFile } = require("child_process");
 const { transcribe, transcriptionCost } = require("./gateway-transcription");
-
-const RECORDER = path.join(__dirname, "bin", "steno-recorder");
-// Rend le helper responsable de ses propres permissions macOS (micro, surveillance du clavier)
-const DISCLAIM_EXEC = path.join(__dirname, "bin", "disclaim-exec");
+const { helperCommand } = require("./native-helper");
 
 function osascript(...lines) {
     return new Promise((resolve, reject) => {
@@ -50,7 +47,7 @@ function watchDictation({ model, getPhrases, getLanguage, tryBegin, end, showOve
         if (recording || !tryBegin()) return;
 
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), "steno-dictee-"));
-        const child = spawn(DISCLAIM_EXEC, [RECORDER, "record", "--mic-only", "--out", dir]);
+        const child = spawn(...helperCommand("record", "--mic-only", "--out", dir));
         recording = {
             child,
             dir,
@@ -98,9 +95,8 @@ function watchDictation({ model, getPhrases, getLanguage, tryBegin, end, showOve
                 return;
             }
 
-            await pasteText(text);
-            showOverlay("done");
-            hideOverlay(800);
+            // La bulle disparaît au moment où le texte est collé, sans coche de validation
+            await pasteText(text, () => hideOverlay(0));
             onDictation({
                 text,
                 durationMs: Date.now() - releasedAt,
@@ -117,27 +113,13 @@ function watchDictation({ model, getPhrases, getLanguage, tryBegin, end, showOve
         }
     }
 
-    // Une autre touche a été pressée avec Option droite : c'était un raccourci clavier, pas une dictée
-    function cancel() {
-        if (!recording) return;
-        const { child, dir, exited, wasMuted } = recording;
-        recording = null;
-
-        child.kill("SIGTERM");
-        restoreSystemAudio(wasMuted);
-        exited.then(() => fs.rmSync(dir, { recursive: true, force: true }));
-        hideOverlay(0);
-        end();
-    }
-
-    const hotkey = spawn(DISCLAIM_EXEC, [RECORDER, "hotkey"]);
+    const hotkey = spawn(...helperCommand("hotkey"));
     hotkey.on("error", (error) => console.error("Helper de raccourci introuvable (lancer pnpm run build:native):", error.message));
     hotkey.on("exit", (code) => code !== null && console.error(`Helper de raccourci arrêté (code ${code})`));
     hotkey.stderr.on("data", (data) => console.error("hotkey:", data.toString().trim()));
     onEvents(hotkey, (event) => {
         if (event.type === "down") start();
         if (event.type === "up") stop();
-        if (event.type === "cancel") cancel();
         if (event.type === "error") console.error("Raccourci de dictée:", event.message);
     });
 

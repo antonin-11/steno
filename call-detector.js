@@ -1,9 +1,7 @@
 // Détecte le début et la fin d'un appel Slack, Teams ou Google Meet à partir des apps qui utilisent le micro
-const path = require("path");
 const readline = require("readline");
 const { spawn, execFile } = require("child_process");
-
-const RECORDER = path.join(__dirname, "bin", "steno-recorder");
+const { RECORDER } = require("./native-helper");
 
 // L'app doit utiliser le micro depuis ce délai pour qu'on considère qu'un appel a commencé
 const START_DELAY_MS = 5000;
