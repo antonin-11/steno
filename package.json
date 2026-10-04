@@ -3,7 +3,8 @@
     "version": "1.0.0",
     "main": "index.js",
     "scripts": {
-        "dev": "electron ."
+        "dev": "electron .",
+        "build:native": "sh scripts/build-native.sh"
     },
     "dependencies": {
         "dotenv": "^16.4.7",

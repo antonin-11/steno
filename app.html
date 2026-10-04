@@ -1,0 +1,1182 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8" />
+        <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; media-src 'self' file:" />
+        <title>10lexX</title>
+        <style>
+            :root {
+                --window: #f3f2ef;
+                --panel: #fbfbfa;
+                --panel-border: #e9e8e4;
+                --card: #fcfcfb;
+                --border: #e7e6e2;
+                --row-border: #ecebe7;
+                --hover: #f4f3ef;
+                --nav-active: #e8e6e1;
+                --nav-hover: #ecebe7;
+                --text: #1f1f1e;
+                --muted: #6f6f6c;
+                --faint: #9b9b97;
+                --accent: #1f1f1e;
+            }
+
+            * {
+                box-sizing: border-box;
+            }
+
+            html,
+            body {
+                height: 100%;
+                margin: 0;
+                background: var(--window);
+                color: var(--text);
+                font-family: -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
+                -webkit-font-smoothing: antialiased;
+            }
+
+            body {
+                display: grid;
+                grid-template-columns: 196px 1fr;
+            }
+
+            /* Zone de la barre de titre (feux tricolores macOS), déplaçable */
+            .titlebar {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 36px;
+                -webkit-app-region: drag;
+            }
+
+            /* ---------- Barre latérale ---------- */
+
+            .sidebar {
+                display: flex;
+                flex-direction: column;
+                padding: 44px 8px 12px;
+            }
+
+            .logo {
+                display: flex;
+                align-items: center;
+                gap: 7px;
+                padding: 4px 10px 22px;
+                font-size: 18px;
+                font-weight: 650;
+                letter-spacing: -0.02em;
+            }
+
+            .logo svg {
+                width: 18px;
+                height: 18px;
+            }
+
+            .nav-item {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                width: 100%;
+                height: 30px;
+                margin-bottom: 4px;
+                padding: 0 10px;
+                border: 0;
+                border-radius: 8px;
+                background: transparent;
+                color: var(--text);
+                font: inherit;
+                font-size: 14.5px;
+                text-align: left;
+                cursor: pointer;
+            }
+
+            .nav-item:hover {
+                background: var(--nav-hover);
+            }
+
+            .nav-item.active {
+                background: var(--nav-active);
+            }
+
+            .nav-item svg {
+                flex: 0 0 18px;
+                width: 18px;
+                height: 18px;
+            }
+
+            /* ---------- Panneau principal ---------- */
+
+            .panel {
+                margin: 36px 10px 10px 0;
+                min-height: 0;
+                overflow-y: auto;
+                background: var(--panel);
+                border: 1px solid var(--panel-border);
+                border-radius: 16px;
+            }
+
+            .page {
+                display: none;
+                padding: 34px 30px 30px;
+            }
+
+            .page.active {
+                display: block;
+            }
+
+            h1 {
+                margin: 0 0 28px;
+                font-size: 20px;
+                font-weight: 550;
+                letter-spacing: -0.01em;
+            }
+
+            .subtitle {
+                margin: -18px 0 24px;
+                font-size: 13.5px;
+                line-height: 1.5;
+                color: var(--muted);
+            }
+
+            .header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                height: 28px;
+                padding: 0 0 0 1px;
+                margin-bottom: 10px;
+            }
+
+            .day {
+                font-size: 12px;
+                font-weight: 500;
+                letter-spacing: 0.1em;
+                text-transform: uppercase;
+                color: var(--muted);
+            }
+
+            .group + .group {
+                margin-top: 26px;
+            }
+
+            .search {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .search input {
+                display: none;
+                width: 220px;
+            }
+
+            .search.open input {
+                display: block;
+            }
+
+            input.field,
+            select.field {
+                height: 32px;
+                padding: 0 11px;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                background: var(--card);
+                font: inherit;
+                font-size: 13.5px;
+                color: var(--text);
+                outline: none;
+            }
+
+            input.field:focus,
+            select.field:focus {
+                border-color: #c9c7c1;
+            }
+
+            .icon-button {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 28px;
+                height: 28px;
+                padding: 0;
+                border: 0;
+                border-radius: 7px;
+                background: transparent;
+                color: var(--text);
+                cursor: pointer;
+            }
+
+            .icon-button:hover {
+                background: rgba(0, 0, 0, 0.05);
+            }
+
+            .icon-button svg {
+                width: 17px;
+                height: 17px;
+            }
+
+            .search .icon-button {
+                color: var(--faint);
+            }
+
+            .card {
+                background: var(--card);
+                border: 1px solid var(--border);
+                border-radius: 16px;
+                overflow: hidden;
+            }
+
+            .row {
+                display: flex;
+                align-items: center;
+                gap: 16px;
+                min-height: 53px;
+                padding: 13px 16px;
+                border-top: 1px solid var(--row-border);
+            }
+
+            .row:first-child {
+                border-top: 0;
+            }
+
+            .row:hover {
+                background: var(--hover);
+            }
+
+            .time {
+                flex: 0 0 98px;
+                font-size: 13px;
+                color: var(--muted);
+            }
+
+            .text {
+                flex: 1;
+                min-width: 0;
+                font-size: 14.5px;
+                line-height: 1.55;
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
+            }
+
+            .metric {
+                flex: 0 0 auto;
+                font-size: 13px;
+                color: var(--muted);
+                font-variant-numeric: tabular-nums;
+                text-align: right;
+            }
+
+            .metric.cost {
+                width: 80px;
+            }
+
+            .metric.duration {
+                width: 44px;
+            }
+
+            /* Les boutons n'apparaissent qu'au survol */
+            .actions {
+                flex: 0 0 auto;
+                display: flex;
+                visibility: hidden;
+            }
+
+            .row:hover .actions {
+                visibility: visible;
+            }
+
+            .empty {
+                padding: 40px 16px;
+                text-align: center;
+                font-size: 14px;
+                color: var(--muted);
+            }
+
+            .memo-title {
+                display: block;
+                margin-bottom: 2px;
+                font-size: 12.5px;
+                color: var(--muted);
+            }
+
+            /* Carte de statistiques des vocaux */
+            .stats {
+                display: flex;
+                flex-direction: column;
+                gap: 11px;
+                margin: auto 2px 0;
+                padding: 16px 16px;
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                background: var(--panel);
+            }
+
+            .stat {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: baseline;
+                column-gap: 6px;
+            }
+
+            .stat-value {
+                font-family: Charter, "Bitstream Charter", "Iowan Old Style", serif;
+                font-variant-numeric: lining-nums;
+                font-size: 22px;
+                line-height: 1.1;
+                letter-spacing: -0.02em;
+            }
+
+            .stat-label {
+                font-size: 12.5px;
+                color: var(--text);
+            }
+
+            .notice {
+                margin-bottom: 18px;
+                padding: 12px 14px;
+                border: 1px solid #ecd9b0;
+                border-radius: 10px;
+                background: #fbf5e7;
+                font-size: 13.5px;
+                line-height: 1.5;
+                color: #6b5320;
+            }
+
+            /* ---------- Dictionnaire ---------- */
+
+            .add-word {
+                display: flex;
+                gap: 8px;
+                margin-bottom: 18px;
+            }
+
+            .add-word input {
+                flex: 1;
+                max-width: 360px;
+            }
+
+            .button {
+                height: 32px;
+                padding: 0 14px;
+                border: 0;
+                border-radius: 8px;
+                background: var(--accent);
+                color: #fff;
+                font: inherit;
+                font-size: 13.5px;
+                font-weight: 500;
+                cursor: pointer;
+            }
+
+            .button:disabled {
+                opacity: 0.35;
+                cursor: default;
+            }
+
+            .word-row {
+                min-height: 46px;
+                padding: 8px 16px;
+            }
+
+            .word-row .text {
+                font-size: 14.5px;
+            }
+
+            /* ---------- Dictées ---------- */
+
+            .setting {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                margin-bottom: 18px;
+                font-size: 13.5px;
+                color: var(--muted);
+            }
+
+            /* ---------- Réunions ---------- */
+
+            .row.clickable {
+                cursor: pointer;
+            }
+
+            .preview {
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+            }
+
+            .status {
+                color: var(--muted);
+            }
+
+            .status.error {
+                color: #a3402a;
+            }
+
+            .meeting-header {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin: -4px 0 6px -6px;
+            }
+
+            .meeting-header h1 {
+                flex: 1;
+                margin: 0;
+            }
+
+            .meeting-actions {
+                display: flex;
+            }
+
+            .meeting-meta {
+                margin: 0 0 18px;
+                font-size: 13.5px;
+                color: var(--muted);
+            }
+
+            .meeting-audio {
+                display: block;
+                width: 100%;
+                margin-bottom: 20px;
+            }
+
+            .utterance {
+                display: flex;
+                gap: 16px;
+                padding: 13px 16px;
+                border-top: 1px solid var(--row-border);
+            }
+
+            .utterance:first-child {
+                border-top: 0;
+            }
+
+            .speaker {
+                flex: 0 0 140px;
+                min-width: 0;
+            }
+
+            .speaker-name {
+                max-width: 100%;
+                padding: 0;
+                border: 0;
+                background: transparent;
+                color: var(--text);
+                font: inherit;
+                font-size: 13.5px;
+                font-weight: 550;
+                text-align: left;
+                overflow-wrap: anywhere;
+                cursor: pointer;
+            }
+
+            .speaker-name:hover {
+                text-decoration: underline;
+            }
+
+            .speaker input.field {
+                width: 100%;
+                height: 26px;
+                padding: 0 8px;
+            }
+
+            .utterance-time {
+                display: block;
+                margin-top: 3px;
+                font-size: 12px;
+                color: var(--faint);
+                font-variant-numeric: tabular-nums;
+            }
+
+            /* Segment et mot en cours pendant l'écoute */
+            .utterance.playing {
+                background: var(--hover);
+            }
+
+            /* Gras dessiné par un contour : le mot ne change pas de largeur, donc le texte ne bouge pas */
+            .word.current {
+                -webkit-text-stroke: 0.6px currentColor;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="titlebar"></div>
+
+        <aside class="sidebar">
+            <div class="logo">
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h9M3 10h6M3 15h5" /><path d="M11 14l2.5 2.5L18 11" /></svg>
+                10lexX
+            </div>
+            <button class="nav-item" data-page="corrections">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h11M4 11h8M4 16h6" /><path d="M13.5 17.5l2.5 2.5 5-5.5" /></svg>
+                Corrections
+            </button>
+            <button class="nav-item" data-page="dictations">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2" /></svg>
+                Dictées
+            </button>
+            <button class="nav-item" data-page="voice">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" /></svg>
+                Vocaux
+            </button>
+            <button class="nav-item" data-page="meetings">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h3.5l2 5-2.5 1.5a11 11 0 0 0 5.5 5.5l1.5-2.5 5 2V19a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2" /></svg>
+                Réunions
+            </button>
+            <button class="nav-item" data-page="dictionary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5z" /><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H19v-3" /><path d="M9.5 13.5l2.5-6 2.5 6M10.3 11.6h3.4" /></svg>
+                Dictionnaire
+            </button>
+            <div class="stats" id="stats"></div>
+        </aside>
+
+        <div class="panel">
+            <section class="page" id="page-corrections">
+                <h1>Corrections</h1>
+                <div id="list"></div>
+            </section>
+
+            <section class="page" id="page-dictations">
+                <h1>Dictées</h1>
+                <p class="subtitle">Maintiens Option droite, parle, puis relâche : le texte est collé là où se trouve le curseur.</p>
+                <label class="setting">
+                    Langue
+                    <select class="field" id="dictation-language">
+                        <option value="fr">Français</option>
+                        <option value="en">Anglais</option>
+                        <option value="auto">Auto</option>
+                    </select>
+                </label>
+                <div id="dictation-list"></div>
+            </section>
+
+            <section class="page" id="page-voice">
+                <h1>Vocaux</h1>
+                <p class="subtitle">Les nouveaux mémos de l'app Dictaphone sont récupérés automatiquement, transcrits puis corrigés.</p>
+                <div id="voice-notice"></div>
+                <div id="voice-list"></div>
+            </section>
+
+            <section class="page" id="page-meetings">
+                <div id="meetings"></div>
+            </section>
+
+            <section class="page" id="page-dictionary">
+                <h1>Dictionnaire</h1>
+                <p class="subtitle">Les mots ajoutés ici sont considérés comme bien orthographiés : l'IA ne les corrigera jamais.</p>
+                <form class="add-word" id="add-word">
+                    <input class="field" id="word-input" placeholder="Ajouter un mot, un nom propre, une expression…" autocomplete="off" />
+                    <button class="button" id="add-button" type="submit" disabled>Ajouter</button>
+                </form>
+                <div id="words"></div>
+            </section>
+        </div>
+
+        <script>
+            const ICONS = {
+                search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg>',
+                copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6.5A2.5 2.5 0 0 0 13.5 4h-7A2.5 2.5 0 0 0 4 6.5v7A2.5 2.5 0 0 0 6.5 16H8"/></svg>',
+                check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+                remove: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+                back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
+                trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>',
+            };
+
+            function el(tag, className, text) {
+                const node = document.createElement(tag);
+                if (className) node.className = className;
+                if (text !== undefined) node.textContent = text;
+                return node;
+            }
+
+            function iconButton(icon, title, onClick) {
+                const button = el("button", "icon-button");
+                button.type = "button";
+                button.title = title;
+                button.innerHTML = ICONS[icon];
+                button.addEventListener("click", onClick);
+                return button;
+            }
+
+            // ---------- Navigation ----------
+
+            function showPage(name) {
+                document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.page === name));
+                document.querySelectorAll(".page").forEach((page) => page.classList.toggle("active", page.id === `page-${name}`));
+                try {
+                    localStorage.setItem("page", name);
+                } catch {}
+            }
+
+            document.querySelectorAll(".nav-item").forEach((item) => item.addEventListener("click", () => showPage(item.dataset.page)));
+
+            let initialPage = "corrections";
+            try {
+                initialPage = localStorage.getItem("page") || initialPage;
+            } catch {}
+            showPage(initialPage);
+
+            // ---------- Corrections ----------
+
+            let history = [];
+
+            function dayLabel(date) {
+                const today = new Date();
+                const yesterday = new Date();
+                yesterday.setDate(today.getDate() - 1);
+
+                if (date.toDateString() === today.toDateString()) return "Today";
+                if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+                return date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+            }
+
+            function formatTime(date) {
+                return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }).toLowerCase();
+            }
+
+            function formatCost(entry) {
+                if (entry.costStatus === "pending") return "…";
+                if (typeof entry.cost !== "number") return "—";
+                return "$" + (entry.cost < 0.01 ? entry.cost.toFixed(6) : entry.cost.toFixed(4));
+            }
+
+            function costTooltip(entry) {
+                if (entry.source === "dictation") {
+                    const cost = entry.costStatus === "unavailable" ? "Coût non renvoyé par le Gateway" : "Coût de la transcription (MAI-Transcribe-2)";
+                    return `${cost}\n${entry.audioDurationSec.toFixed(1)} s d'audio · durée affichée : du relâchement au collage`;
+                }
+                const tokens = `${entry.inputTokens} tokens en entrée · ${entry.outputTokens} tokens en sortie`;
+                const lines = [];
+                if (entry.costStatus === "none") return "Aucune parole détectée, rien à corriger";
+                if (entry.costStatus === "pending") lines.push("Coût en cours de récupération auprès du Gateway");
+                if (entry.costStatus === "unavailable") lines.push("Coût non récupéré auprès du Gateway");
+                lines.push(tokens);
+                if (entry.provider) lines.push(`Fournisseur : ${entry.provider}`);
+                if (entry.transcriptSource === "apple") lines.push("Transcription Apple (gratuite)");
+                if (entry.transcriptSource === "api") lines.push("Coût de la transcription non inclus (correction seulement)");
+                return lines.join("\n");
+            }
+
+            function formatDuration(ms) {
+                return (ms / 1000).toFixed(1) + " s";
+            }
+
+            function formatMemoDuration(seconds) {
+                const total = Math.round(seconds);
+                return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+            }
+
+            // Ex. : « Mercredi 23 septembre - 8h 56 »
+            function formatMemoDate(date) {
+                const day = date.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+                const time = `${date.getHours()}h ${String(date.getMinutes()).padStart(2, "0")}`;
+                return `${day.charAt(0).toUpperCase()}${day.slice(1)} - ${time}`;
+            }
+
+            // Dictaphone met une date ISO comme titre par défaut : on l'affiche en date lisible
+            function memoTitle(entry) {
+                const isDefaultTitle = !entry.memoTitle || /^\d{4}-\d{2}-\d{2}T/.test(entry.memoTitle);
+                return isDefaultTitle ? formatMemoDate(new Date(entry.date)) : entry.memoTitle;
+            }
+
+            function createRow(entry) {
+                const row = el("div", "row");
+                // Pas de colonne d'heure pour les vocaux : la date est dans le titre du mémo
+                if (entry.source !== "voice") {
+                    row.append(el("div", "time", formatTime(new Date(entry.date))));
+                }
+
+                const text = el("div", "text");
+                if (entry.source === "voice") {
+                    const title = `${memoTitle(entry)} · ${formatMemoDuration(entry.memoDuration)}`;
+                    text.append(el("span", "memo-title", title));
+                }
+                text.append(entry.corrected || "(aucune parole détectée)");
+                row.append(text);
+
+                // Le coût reste enregistré pour les vocaux, mais n'est affiché que pour les corrections
+                if (entry.source !== "voice") {
+                    const cost = el("div", "metric cost", formatCost(entry));
+                    cost.title = costTooltip(entry);
+                    row.append(cost);
+                }
+                row.append(el("div", "metric duration", formatDuration(entry.durationMs)));
+
+                const actions = el("div", "actions");
+                const copy = iconButton("copy", "Copier", async () => {
+                    await window.tenlex.copyText(entry.corrected);
+                    copy.innerHTML = ICONS.check;
+                    setTimeout(() => (copy.innerHTML = ICONS.copy), 1200);
+                });
+                actions.append(copy);
+                row.append(actions);
+
+                return row;
+            }
+
+            // Liste groupée par jour avec recherche ; utilisée par Corrections et Vocaux
+            function createListView(container, filter, emptyMessage) {
+                let query = "";
+                let searchOpen = false;
+
+                function createSearch() {
+                    const search = el("div", "search" + (searchOpen ? " open" : ""));
+                    const input = el("input", "field");
+                    input.placeholder = "Search";
+                    input.value = query;
+                    input.addEventListener("input", () => {
+                        query = input.value;
+                        render();
+                    });
+                    input.addEventListener("keydown", (e) => {
+                        if (e.key === "Escape") {
+                            query = "";
+                            searchOpen = false;
+                            render();
+                        }
+                    });
+
+                    const button = iconButton("search", "Rechercher", () => {
+                        searchOpen = !searchOpen;
+                        if (!searchOpen) query = "";
+                        render();
+                    });
+
+                    search.append(input, button);
+                    return { search, input };
+                }
+
+                function render() {
+                    const needle = query.trim().toLowerCase();
+                    const entries = history
+                        .filter(filter)
+                        .filter((entry) => !needle || entry.corrected.toLowerCase().includes(needle) || entry.original.toLowerCase().includes(needle));
+
+                    // Regroupe par jour
+                    const groups = [];
+                    for (const entry of entries) {
+                        const label = dayLabel(new Date(entry.date));
+                        if (groups.at(-1)?.label !== label) groups.push({ label, entries: [] });
+                        groups.at(-1).entries.push(entry);
+                    }
+
+                    container.replaceChildren();
+                    const { search, input } = createSearch();
+
+                    if (groups.length === 0) {
+                        const header = el("div", "header");
+                        header.append(el("div", "day", "Today"), search);
+                        const card = el("div", "card");
+                        card.append(el("div", "empty", needle ? "Aucun résultat." : emptyMessage));
+                        container.append(header, card);
+                    }
+
+                    groups.forEach((group, index) => {
+                        const section = el("section", "group");
+                        const header = el("div", "header");
+                        header.append(el("div", "day", group.label));
+                        if (index === 0) header.append(search);
+
+                        const card = el("div", "card");
+                        group.entries.forEach((entry) => card.append(createRow(entry)));
+
+                        section.append(header, card);
+                        container.append(section);
+                    });
+
+                    if (searchOpen) {
+                        input.focus();
+                        input.setSelectionRange(input.value.length, input.value.length);
+                    }
+                }
+
+                return render;
+            }
+
+            // Les entrées sont triées par date de création ; les mémos gardent la date d'enregistrement
+            const byDateDesc = (a, b) => new Date(b.date) - new Date(a.date);
+
+            // Les corrections n'ont pas de champ source ; les mémos et les dictées si
+            const renderCorrections = createListView(document.getElementById("list"), (entry) => !entry.source, "Aucune correction pour l'instant.");
+            const renderDictations = createListView(document.getElementById("dictation-list"), (entry) => entry.source === "dictation", "Aucune dictée pour l'instant. Maintiens Option droite et parle : le texte apparaîtra ici.");
+            const renderVoice = createListView(document.getElementById("voice-list"), (entry) => entry.source === "voice", "Aucun mémo pour l'instant. Enregistre un mémo dans Dictaphone : il apparaîtra ici.");
+
+            const compact = new Intl.NumberFormat("fr-FR", { notation: "compact", maximumFractionDigits: 1 });
+
+            const countWords = (text) => text?.match(/\S+/g)?.length ?? 0;
+            const plural = (count, singular, pluralForm) => (count > 1 ? pluralForm : singular);
+
+            // Statistiques globales : vocaux + correcteur de fautes
+            function renderStats() {
+                const memos = history.filter((entry) => entry.source === "voice");
+                const corrections = history.filter((entry) => !entry.source);
+                const transcribedWords = memos.reduce((sum, entry) => sum + countWords(entry.original), 0);
+                const correctedWords = corrections.reduce((sum, entry) => sum + countWords(entry.corrected), 0);
+                const cost = history.reduce((sum, entry) => sum + (typeof entry.cost === "number" ? entry.cost : 0), 0);
+
+                const stats = document.getElementById("stats");
+                stats.replaceChildren();
+                stats.title = "Prix total : vocaux, correcteur de fautes et dictées, d'après les coûts du Gateway (transcriptions des vocaux et réunions non incluses)";
+                for (const [value, label] of [
+                    // « 1,2 k » devient « 1,2k »
+                    [compact.format(transcribedWords).replace(/\s/g, ""), plural(transcribedWords, "mot transcrit", "mots transcrits")],
+                    [compact.format(memos.length), plural(memos.length, "note transcrite", "notes transcrites")],
+                    [compact.format(correctedWords), plural(correctedWords, "mot corrigé", "mots corrigés")],
+                    ["$" + cost.toFixed(2), "dépensés"],
+                ]) {
+                    const stat = el("div", "stat");
+                    stat.append(el("span", "stat-value", value), el("span", "stat-label", label));
+                    stats.append(stat);
+                }
+            }
+
+            function setHistory(updated) {
+                history = [...updated].sort(byDateDesc);
+                renderCorrections();
+                renderDictations();
+                renderVoice();
+                renderStats();
+            }
+
+            window.tenlex.onHistoryUpdated(setHistory);
+            window.tenlex.getHistory().then(setHistory);
+
+            // Bandeau affiché quand l'app n'a pas accès aux mémos
+            function renderVoiceStatus(status) {
+                const notice = document.getElementById("voice-notice");
+                notice.replaceChildren();
+                if (status.available !== false) return;
+
+                const message =
+                    status.error === "permission"
+                        ? "10lexX n'a pas accès aux mémos de Dictaphone. Donne l'Accès complet au disque à l'app qui lance 10lexX (iTerm), dans Réglages Système › Confidentialité et sécurité, puis relance-la."
+                        : `Impossible de lire les mémos de Dictaphone : ${status.error}`;
+                notice.append(el("div", "notice", message));
+            }
+
+            window.tenlex.onVoiceStatus(renderVoiceStatus);
+            window.tenlex.getVoiceStatus().then(renderVoiceStatus);
+
+            // ---------- Dictées ----------
+
+            const languageSelect = document.getElementById("dictation-language");
+            window.tenlex.getDictationLanguage().then((language) => (languageSelect.value = language));
+            languageSelect.addEventListener("change", () => window.tenlex.setDictationLanguage(languageSelect.value));
+
+            // ---------- Réunions ----------
+
+            const meetingsContainer = document.getElementById("meetings");
+            let meetings = [];
+            // Réunion affichée en détail, et interlocuteur en cours de renommage
+            let openMeeting = null;
+            let editingSpeaker = null;
+            let transcriptContainer = null;
+
+            // Surlignage pendant l'écoute : segments et mots affichés, avec leurs horodatages
+            let meetingAudio = null;
+            let playbackBlocks = [];
+            // Mots de chaque interlocuteur, dans l'ordre : deux personnes peuvent parler en même temps
+            let playbackWords = new Map();
+            let playingBlock = null;
+            let playingWords = new Set();
+            // Un mot reste surligné ce temps après sa fin, pour éviter un clignotement entre deux mots
+            const WORD_HOLD_SECONDS = 0.3;
+
+            const MEETING_STATUS = { recording: "Enregistrement en cours…", processing: "Transcription en cours…" };
+
+            function meetingTitle(meeting) {
+                return `${meeting.label} · ${formatMemoDate(new Date(meeting.startedAt))}`;
+            }
+
+            function renderMeetingList() {
+                meetingsContainer.replaceChildren(el("h1", "", "Réunions"));
+                const subtitle = el("p", "subtitle", "Les appels Slack, Google Meet et Teams sont enregistrés automatiquement, puis transcrits.");
+                meetingsContainer.append(subtitle);
+
+                const groups = [];
+                for (const meeting of meetings) {
+                    const label = dayLabel(new Date(meeting.startedAt));
+                    if (groups.at(-1)?.label !== label) groups.push({ label, meetings: [] });
+                    groups.at(-1).meetings.push(meeting);
+                }
+
+                if (groups.length === 0) {
+                    const card = el("div", "card");
+                    card.append(el("div", "empty", "Aucune réunion pour l'instant. Lance un appel Slack, Google Meet ou Teams : il sera enregistré automatiquement."));
+                    meetingsContainer.append(card);
+                    return;
+                }
+
+                for (const group of groups) {
+                    const section = el("section", "group");
+                    const header = el("div", "header");
+                    header.append(el("div", "day", group.label));
+
+                    const card = el("div", "card");
+                    for (const meeting of group.meetings) {
+                        const row = el("div", "row clickable");
+                        row.append(el("div", "time", formatTime(new Date(meeting.startedAt))));
+
+                        const text = el("div", "text");
+                        text.append(el("span", "memo-title", meeting.label));
+                        if (meeting.status === "error") text.append(el("span", "status error", `Échec : ${meeting.error}`));
+                        else if (MEETING_STATUS[meeting.status]) text.append(el("span", "status", MEETING_STATUS[meeting.status]));
+                        else text.append(el("span", "preview", meeting.preview || "(aucune parole détectée)"));
+                        row.append(text);
+
+                        row.append(el("div", "metric duration", meeting.durationSec ? formatMemoDuration(meeting.durationSec) : ""));
+                        row.addEventListener("click", () => showMeeting(meeting.id));
+                        card.append(row);
+                    }
+
+                    section.append(header, card);
+                    meetingsContainer.append(section);
+                }
+            }
+
+            // Deux interlocuteurs renommés pareil sont fusionnés : leurs blocs qui se suivent aussi
+            function transcriptBlocks(meeting) {
+                const blocks = [];
+                for (const utterance of meeting.utterances ?? []) {
+                    const last = blocks.at(-1);
+                    if (last && meeting.speakers[last.speaker] === meeting.speakers[utterance.speaker]) {
+                        last.text += ` ${utterance.text}`;
+                        last.words = last.words && utterance.words ? [...last.words, ...utterance.words] : undefined;
+                    } else {
+                        blocks.push({ ...utterance });
+                    }
+                }
+                return blocks;
+            }
+
+            function speakerEditor(speaker) {
+                const input = el("input", "field");
+                input.value = openMeeting.speakers[speaker];
+                let finished = false;
+
+                async function finish(save) {
+                    if (finished) return;
+                    finished = true;
+                    if (save) openMeeting = await window.tenlex.renameSpeaker(openMeeting.id, speaker, input.value);
+                    editingSpeaker = null;
+                    renderTranscript();
+                }
+
+                input.addEventListener("keydown", (e) => {
+                    if (e.key === "Enter") finish(true);
+                    if (e.key === "Escape") finish(false);
+                });
+                input.addEventListener("blur", () => finish(true));
+                return input;
+            }
+
+            function highlightPlayback() {
+                // Rien de surligné tant que l'écoute n'a pas commencé
+                const started = meetingAudio && (meetingAudio.currentTime > 0 || !meetingAudio.paused);
+                const time = started ? meetingAudio.currentTime : -1;
+                const block = playbackBlocks.findLast((b) => b.start <= time) ?? null;
+
+                // Mot en cours de chaque interlocuteur, même s'il continue de parler pendant le bloc suivant
+                const words = new Set();
+                for (const speakerWords of playbackWords.values()) {
+                    const word = speakerWords.findLast((w) => w.start <= time);
+                    if (word && time <= word.end + WORD_HOLD_SECONDS) words.add(word);
+                }
+
+                if (block !== playingBlock) {
+                    playingBlock?.row.classList.remove("playing");
+                    block?.row.classList.add("playing");
+                    playingBlock = block;
+                }
+                for (const word of playingWords) {
+                    if (!words.has(word)) word.el.classList.remove("current");
+                }
+                for (const word of words) word.el.classList.add("current");
+                playingWords = words;
+            }
+
+            // timeupdate n'arrive que 4 fois par seconde : trop lent pour suivre les mots
+            function followPlayback(audio) {
+                meetingAudio = audio;
+                let frame = null;
+                const loop = () => {
+                    highlightPlayback();
+                    frame = requestAnimationFrame(loop);
+                };
+                audio.addEventListener("play", () => {
+                    cancelAnimationFrame(frame);
+                    loop();
+                });
+                audio.addEventListener("pause", () => cancelAnimationFrame(frame));
+                audio.addEventListener("seeked", highlightPlayback);
+            }
+
+            // Re-rendu de la transcription seule : le lecteur audio continue pendant un renommage
+            function renderTranscript() {
+                const blocks = transcriptBlocks(openMeeting);
+                transcriptContainer.replaceChildren();
+                playbackBlocks = [];
+                playbackWords = new Map();
+                playingBlock = null;
+                playingWords = new Set();
+                if (openMeeting.status !== "done") return;
+
+                const card = el("div", "card");
+                if (blocks.length === 0) card.append(el("div", "empty", "Aucune parole détectée."));
+
+                for (const block of blocks) {
+                    const row = el("div", "utterance");
+                    const speaker = el("div", "speaker");
+
+                    if (editingSpeaker === block.speaker) {
+                        const input = speakerEditor(block.speaker);
+                        speaker.append(input);
+                        setTimeout(() => input.select());
+                    } else {
+                        const name = el("button", "speaker-name", openMeeting.speakers[block.speaker]);
+                        name.type = "button";
+                        name.title = "Renommer";
+                        name.addEventListener("click", () => {
+                            editingSpeaker = block.speaker;
+                            renderTranscript();
+                        });
+                        speaker.append(name);
+                    }
+                    speaker.append(el("span", "utterance-time", formatMemoDuration(block.start)));
+
+                    // Un mot par élément quand on a leurs horodatages (réunions transcrites avant : texte seul)
+                    const text = el("div", "text");
+                    const words = (block.words ?? []).map((word) => ({ el: el("span", "word", word.text), start: word.start, end: word.end }));
+                    words.forEach((word, i) => {
+                        if (i > 0) text.append(" ");
+                        text.append(word.el);
+                    });
+                    if (words.length === 0) text.append(block.text);
+                    playbackBlocks.push({ row, start: block.start });
+                    playbackWords.set(block.speaker, [...(playbackWords.get(block.speaker) ?? []), ...words]);
+
+                    row.append(speaker, text);
+                    card.append(row);
+                }
+                transcriptContainer.append(card);
+                highlightPlayback();
+            }
+
+            function renderMeeting() {
+                const meeting = openMeeting;
+                meetingsContainer.replaceChildren();
+
+                const header = el("div", "meeting-header");
+                const actions = el("div", "meeting-actions");
+                const copy = iconButton("copy", "Copier la transcription", async () => {
+                    const text = transcriptBlocks(openMeeting).map((block) => `${openMeeting.speakers[block.speaker]} : ${block.text}`).join("\n\n");
+                    await window.tenlex.copyText(text);
+                    copy.innerHTML = ICONS.check;
+                    setTimeout(() => (copy.innerHTML = ICONS.copy), 1200);
+                });
+                if (meeting.status === "done") actions.append(copy);
+                actions.append(
+                    iconButton("trash", "Supprimer", async () => {
+                        if (!confirm("Supprimer cette réunion et son audio ?")) return;
+                        await window.tenlex.deleteMeeting(meeting.id);
+                    })
+                );
+                header.append(iconButton("back", "Retour", closeMeeting), el("h1", "", meetingTitle(meeting)), actions);
+                meetingsContainer.append(header);
+
+                const meta = [
+                    meeting.durationSec && `Durée ${formatMemoDuration(meeting.durationSec)}`,
+                    typeof meeting.cost === "number" && `Coût ${formatCost(meeting)}`,
+                ]
+                    .filter(Boolean)
+                    .join(" · ");
+                meetingsContainer.append(el("p", "meeting-meta", MEETING_STATUS[meeting.status] ?? meta));
+
+                if (meeting.status === "error") meetingsContainer.append(el("div", "notice", `Échec : ${meeting.error}`));
+
+                meetingAudio = null;
+                if (meeting.audioUrl) {
+                    const audio = el("audio", "meeting-audio");
+                    audio.controls = true;
+                    audio.src = meeting.audioUrl;
+                    followPlayback(audio);
+                    meetingsContainer.append(audio);
+                }
+
+                transcriptContainer = el("div");
+                meetingsContainer.append(transcriptContainer);
+                renderTranscript();
+            }
+
+            async function showMeeting(id) {
+                openMeeting = await window.tenlex.getMeeting(id);
+                editingSpeaker = null;
+                renderMeeting();
+            }
+
+            function closeMeeting() {
+                openMeeting = null;
+                renderMeetingList();
+            }
+
+            function setMeetings(updated) {
+                meetings = updated;
+                if (!openMeeting) return renderMeetingList();
+
+                // La réunion affichée a été supprimée, ou son statut a changé (ex. transcription terminée)
+                const summary = meetings.find((meeting) => meeting.id === openMeeting.id);
+                if (!summary) closeMeeting();
+                else if (summary.status !== openMeeting.status) showMeeting(openMeeting.id);
+            }
+
+            window.tenlex.onMeetingsUpdated(setMeetings);
+            window.tenlex.getMeetings().then(setMeetings);
+
+            // ---------- Dictionnaire ----------
+
+            const wordsContainer = document.getElementById("words");
+            const wordInput = document.getElementById("word-input");
+            const addButton = document.getElementById("add-button");
+
+            function renderWords(words) {
+                wordsContainer.replaceChildren();
+                const card = el("div", "card");
+
+                if (words.length === 0) {
+                    card.append(el("div", "empty", "Aucun mot pour l'instant."));
+                }
+
+                words.forEach((word) => {
+                    const row = el("div", "row word-row");
+                    row.append(el("div", "text", word));
+
+                    const actions = el("div", "actions");
+                    actions.append(iconButton("remove", "Supprimer", async () => renderWords(await window.tenlex.removeWord(word))));
+                    row.append(actions);
+                    card.append(row);
+                });
+
+                wordsContainer.append(card);
+            }
+
+            wordInput.addEventListener("input", () => {
+                addButton.disabled = !wordInput.value.trim();
+            });
+
+            document.getElementById("add-word").addEventListener("submit", async (e) => {
+                e.preventDefault();
+                if (!wordInput.value.trim()) return;
+
+                renderWords(await window.tenlex.addWord(wordInput.value));
+                wordInput.value = "";
+                addButton.disabled = true;
+                wordInput.focus();
+            });
+
+            window.tenlex.getDictionary().then(renderWords);
+        </script>
+    </body>
+</html>
