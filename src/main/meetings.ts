@@ -1,11 +1,13 @@
 // Enregistre les appels détectés (micro + son du Mac) puis les transcrit avec MAI-Transcribe-2 via le Gateway
-const fs = require("fs");
-const path = require("path");
-const readline = require("readline");
-const { pathToFileURL } = require("url");
-const { spawn, execFile } = require("child_process");
-const { transcribe, transcriptionCost } = require("./gateway-transcription");
-const { helperCommand } = require("./native-helper");
+import fs from "fs";
+import path from "path";
+import readline from "readline";
+import { spawn, execFile, type ChildProcessWithoutNullStreams } from "child_process";
+import { transcribe, transcriptionCost, type AzurePhrase, type TranscriptionResult } from "./gateway-transcription";
+import { helperCommand } from "./native-helper";
+import type { Call } from "./call-detector";
+import type { RecordingIndicator } from "./recording-indicator";
+import type { Meeting, MeetingDetails, MeetingSummary, TimedWord, Utterance } from "../shared/types";
 
 // Opus mono : format accepté par MAI-Transcribe-2, et léger à envoyer
 const OPUS = ["-ac", "1", "-c:a", "libopus", "-b:a", "24k"];
@@ -13,7 +15,10 @@ const OPUS = ["-ac", "1", "-c:a", "libopus", "-b:a", "24k"];
 // Silence entre deux mots à partir duquel on coupe une phrase
 const PAUSE_SECONDS = 1;
 
-function run(command, args) {
+// Phrase horodatée ; speaker est le numéro d'Azure, remplacé ensuite par "me", "s0", "s1"…
+type Phrase = Omit<Utterance, "speaker"> & { speaker?: number | string };
+
+function run(command: string, args: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
         execFile(command, args, { maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) =>
             error ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout)
@@ -21,11 +26,11 @@ function run(command, args) {
     });
 }
 
-const ffmpeg = (args) => run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...args]);
+const ffmpeg = (args: string[]) => run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...args]);
 
 // Compresse les deux pistes, et les mixe en un seul fichier pour l'écoute
-async function encodeAudio(dir) {
-    const file = (name) => path.join(dir, name);
+async function encodeAudio(dir: string) {
+    const file = (name: string) => path.join(dir, name);
     await ffmpeg(["-i", file("mic.wav"), ...OPUS, file("mic.ogg")]);
     await ffmpeg(["-i", file("system.wav"), ...OPUS, file("system.ogg")]);
     await ffmpeg([
@@ -42,13 +47,13 @@ async function encodeAudio(dir) {
 // Azure renvoie une seule phrase par interlocuteur tant que personne d'autre ne parle sur la piste :
 // on la coupe aux pauses grâce aux horodatages des mots, pour pouvoir intercaler les deux pistes.
 // Les mots horodatés sont gardés pour surligner celui en cours pendant l'écoute
-function splitAtPauses(phrase) {
+function splitAtPauses(phrase: AzurePhrase): Phrase[] {
     if (!phrase.words?.length) {
         const end = (phrase.offsetMilliseconds + phrase.durationMilliseconds) / 1000;
         return [{ speaker: phrase.speaker, start: phrase.offsetMilliseconds / 1000, end, text: phrase.text }];
     }
 
-    const parts = [];
+    const parts: (Phrase & { words: TimedWord[] })[] = [];
     for (const word of phrase.words) {
         const start = word.offsetMilliseconds / 1000;
         const end = (word.offsetMilliseconds + word.durationMilliseconds) / 1000;
@@ -66,7 +71,7 @@ function splitAtPauses(phrase) {
 }
 
 // Phrases horodatées (en secondes). Le numéro de speaker n'existe que dans les métadonnées d'Azure
-function toPhrases(result) {
+function toPhrases(result: TranscriptionResult): Phrase[] {
     const phrases = result.providerMetadata?.azure?.phrases;
     if (phrases) return phrases.flatMap(splitAtPauses);
     if (result.segments?.length) {
@@ -78,7 +83,7 @@ function toPhrases(result) {
 // Piste micro = « Moi » ; piste système = les autres, séparés par la diarisation.
 // Les réponses de l'API sont gardées telles quelles (mic.json, system.json) : on peut refaire
 // la mise en forme sans repayer la transcription
-async function transcribeMeeting(dir, model) {
+async function transcribeMeeting(dir: string, model: string) {
     const [micResult, systemResult] = await Promise.all([
         transcribe(path.join(dir, "mic.ogg"), model, { timestamps: "word" }),
         transcribe(path.join(dir, "system.ogg"), model, { timestamps: "word", diarization: { enabled: true } }),
@@ -91,8 +96,8 @@ async function transcribeMeeting(dir, model) {
 
 
 // Conversation affichée par l'app, construite à partir des deux réponses brutes de l'API
-function buildTranscript(micResult, systemResult) {
-    const phrases = [
+function buildTranscript(micResult: TranscriptionResult, systemResult: TranscriptionResult) {
+    const phrases: Utterance[] = [
         ...toPhrases(micResult).map((phrase) => ({ ...phrase, speaker: "me" })),
         ...toPhrases(systemResult).map((phrase) => ({ ...phrase, speaker: `s${phrase.speaker ?? 0}` })),
     ]
@@ -100,7 +105,7 @@ function buildTranscript(micResult, systemResult) {
         .sort((a, b) => a.start - b.start);
 
     // Les phrases consécutives d'une même personne forment un seul bloc
-    const utterances = [];
+    const utterances: Utterance[] = [];
     for (const phrase of phrases) {
         const last = utterances.at(-1);
         if (last?.speaker === phrase.speaker) {
@@ -112,7 +117,7 @@ function buildTranscript(micResult, systemResult) {
         }
     }
 
-    const speakers = { me: "Moi" };
+    const speakers: Record<string, string> = { me: "Moi" };
     for (const { speaker } of utterances) {
         if (!(speaker in speakers)) speakers[speaker] = `Interlocuteur ${Object.keys(speakers).length}`;
     }
@@ -120,15 +125,32 @@ function buildTranscript(micResult, systemResult) {
     return { speakers, utterances };
 }
 
-function createMeetings({ dir, model, indicator, onChange }) {
+export function createMeetings({
+    dir,
+    model,
+    indicator,
+    onChange,
+}: {
+    dir: string;
+    model: string;
+    indicator: RecordingIndicator;
+    onChange: (list: MeetingSummary[]) => void;
+}) {
     fs.mkdirSync(dir, { recursive: true });
-    let recording = null;
+    let recording: {
+        meeting: Meeting;
+        child: ChildProcessWithoutNullStreams;
+        stopping: boolean;
+        error: string | null;
+        exited: Promise<number | null>;
+    } | null = null;
 
-    const meetingDir = (id) => path.join(dir, id);
-    const read = (id) => JSON.parse(fs.readFileSync(path.join(meetingDir(id), "meeting.json"), "utf8"));
+    const meetingDir = (id: string) => path.join(dir, id);
+    const audioFile = (id: string) => path.join(meetingDir(id), "call.ogg");
+    const read = (id: string): Meeting => JSON.parse(fs.readFileSync(path.join(meetingDir(id), "meeting.json"), "utf8"));
 
     // Liste sans les transcriptions complètes, pour garder les envois à la fenêtre légers
-    function list() {
+    function list(): MeetingSummary[] {
         return fs
             .readdirSync(dir)
             .flatMap((id) => {
@@ -139,25 +161,30 @@ function createMeetings({ dir, model, indicator, onChange }) {
                     return [];
                 }
             })
-            .sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
+            .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
     }
 
-    function save(meeting) {
+    function save(meeting: Meeting) {
         fs.writeFileSync(path.join(meetingDir(meeting.id), "meeting.json"), JSON.stringify(meeting, null, 2));
         onChange(list());
     }
 
-    function startRecording(call) {
+    function startRecording(call: Call) {
         if (recording) return;
 
         const startedAt = new Date();
-        const meeting = { id: startedAt.getTime().toString(36), app: call.bundleId, label: call.label, startedAt: startedAt.toISOString(), status: "recording" };
+        const meeting: Meeting = { id: startedAt.getTime().toString(36), app: call.bundleId, label: call.label, startedAt: startedAt.toISOString(), status: "recording" };
         fs.mkdirSync(meetingDir(meeting.id));
         save(meeting);
 
         const child = spawn(...helperCommand("record", "--out", meetingDir(meeting.id)));
-        const current = { meeting, child, stopping: false, error: null };
-        current.exited = new Promise((resolve) => child.on("close", resolve));
+        const current = {
+            meeting,
+            child,
+            stopping: false,
+            error: null as string | null,
+            exited: new Promise<number | null>((resolve) => child.on("close", resolve)),
+        };
         recording = current;
 
         child.on("error", (error) => (current.error = `Helper d'enregistrement introuvable (lancer pnpm run build:native) : ${error.message}`));
@@ -198,10 +225,10 @@ function createMeetings({ dir, model, indicator, onChange }) {
         await exited;
 
         const endedAt = new Date();
-        let updated = {
+        let updated: Meeting = {
             ...meeting,
             endedAt: endedAt.toISOString(),
-            durationSec: Math.round((endedAt - new Date(meeting.startedAt)) / 1000),
+            durationSec: Math.round((endedAt.getTime() - new Date(meeting.startedAt).getTime()) / 1000),
             status: "processing",
         };
         save(updated);
@@ -213,26 +240,30 @@ function createMeetings({ dir, model, indicator, onChange }) {
             indicator.showResult(true);
         } catch (error) {
             console.error("Échec du traitement de la réunion:", error);
-            updated = { ...updated, status: "error", error: error.message };
+            updated = { ...updated, status: "error", error: (error as Error).message };
             indicator.showResult(false);
         }
         save(updated);
     }
 
-    function get(id) {
-        const meeting = read(id);
-        const audio = path.join(meetingDir(id), "call.ogg");
-        return { ...meeting, audioUrl: fs.existsSync(audio) ? pathToFileURL(audio).href : null };
+    function get(id: string): MeetingDetails {
+        return { ...read(id), hasAudio: fs.existsSync(audioFile(id)) };
     }
 
-    function renameSpeaker(id, speaker, name) {
+    // Audio de la réunion, lu par la fenêtre depuis la mémoire : une URL file:// ne se charge pas
+    // depuis le serveur de dev, et un protocole maison empêcherait d'avancer ou de reculer dans l'écoute
+    function audio(id: string) {
+        return fs.promises.readFile(audioFile(id));
+    }
+
+    function renameSpeaker(id: string, speaker: string, name: string) {
         const meeting = read(id);
-        if (name.trim()) meeting.speakers[speaker] = name.trim();
+        if (name.trim() && meeting.speakers) meeting.speakers[speaker] = name.trim();
         save(meeting);
         return get(id);
     }
 
-    function remove(id) {
+    function remove(id: string) {
         if (recording?.meeting.id === id) return;
         fs.rmSync(meetingDir(id), { recursive: true, force: true });
         onChange(list());
@@ -243,7 +274,5 @@ function createMeetings({ dir, model, indicator, onChange }) {
         recording?.child.kill("SIGTERM");
     }
 
-    return { startRecording, stopRecording, list, get, renameSpeaker, remove, abort };
+    return { startRecording, stopRecording, list, get, audio, renameSpeaker, remove, abort };
 }
-
-module.exports = { createMeetings };

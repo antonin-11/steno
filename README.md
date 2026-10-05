@@ -11,12 +11,12 @@ Une app macOS qui corrige vos textes en français et transcrit votre voix : dict
 -   **Dictionnaire** : mots et expressions à ne jamais corriger, aussi fournis à la dictée pour les reconnaître.
 -   **Historique** : la fenêtre de l'app regroupe les corrections, les dictées, les mémos vocaux et les réunions, avec le coût de chaque appel au Gateway.
 
-Les modèles utilisés sont définis en haut de `index.js`.
+Les modèles utilisés sont définis en haut de `src/main/index.ts`.
 
 ## 📋 Prérequis
 
 -   macOS 14.2 ou plus récent (nécessaire pour enregistrer le son du Mac)
--   Node.js et pnpm
+-   Node.js (20.19 ou plus récent) et pnpm
 -   Les outils en ligne de commande de Xcode (`xcode-select --install`), pour compiler le helper natif en Swift
 -   ffmpeg (`brew install ffmpeg`), pour compresser les enregistrements d'appels
 -   Une clé API Vercel AI Gateway
@@ -59,14 +59,27 @@ Deux modes, qui ne tournent jamais en même temps (une deuxième instance s'arr�
 
 | Commande | Effet |
 | --- | --- |
-| `pnpm run dev` | Mode dev : lance l'app depuis le dossier du projet, sans empaquetage. |
+| `pnpm run dev` | Mode dev : lance l'app depuis le dossier du projet, sans empaquetage. Une modification des fenêtres s'applique à chaud ; une modification du processus principal relance l'app. |
 | `steno` | Fonction zsh qui lance le mode dev en arrière-plan, avec les logs dans `/tmp/steno.log`. |
 | `pnpm run release` | Construit `Sténo.app` avec electron-builder, arrête Sténo (app installée et mode dev), copie le `.env` dans le dossier de données, remplace `/Applications/Sténo.app` et la relance. |
 | `pnpm run package` | Construit seulement `dist/mac-arm64/Sténo.app`, sans l'installer. |
+| `pnpm run typecheck` | Vérifie les types TypeScript (aussi lancé par `pnpm run build`, donc par `package` et `release`). |
 
-La configuration d'electron-builder est dans la clé `build` de `package.json`. `pnpm run release` et `pnpm run package` recompilent le helper ; en mode dev, relancez `pnpm run build:native` après une modification de `native/`.
+L'app est construite avec [electron-vite](https://electron-vite.org) (configuration dans `electron.vite.config.ts`, sortie dans `out/`), puis empaquetée par electron-builder (configuration dans la clé `build` de `package.json`). `pnpm run release` et `pnpm run package` recompilent le helper ; en mode dev, relancez `pnpm run build:native` après une modification de `native/`.
 
 Les logs n'existent qu'en mode dev (`/tmp/steno.log` avec `steno`, sinon dans le terminal) : pour déboguer, reproduisez le problème en mode dev.
+
+## 🗺️ Organisation du code
+
+En TypeScript, avec React et Tailwind pour les fenêtres :
+
+| Dossier | Contenu |
+| --- | --- |
+| `src/main/` | Processus principal : raccourcis, correction, dictée, mémos vocaux, détection et enregistrement des appels |
+| `src/preload/` | API `window.steno`, le seul pont entre les fenêtres et le processus principal |
+| `src/renderer/` | Les trois fenêtres en React : la fenêtre principale (`index.html`), la pastille de correction et de dictée (`overlay.html`), la pilule d'enregistrement (`recording.html`). Couleurs et polices dans `src/renderer/src/styles.css` |
+| `src/shared/` | Types partagés par le processus principal et les fenêtres |
+| `native/` | Helper Swift (écoute du clavier, enregistrement audio, détection des appels) |
 
 ## 🔐 Permissions macOS
 

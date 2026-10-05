@@ -1,37 +1,38 @@
 // Dictée : on maintient Option droite + Cmd droite, on parle, on relâche ; le texte transcrit est collé là où est le curseur
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
-const readline = require("readline");
-const { spawn, execFile } = require("child_process");
-const { transcribe, transcriptionCost } = require("./gateway-transcription");
-const { helperCommand } = require("./native-helper");
+import fs from "fs";
+import os from "os";
+import path from "path";
+import readline from "readline";
+import { spawn, execFile, type ChildProcessWithoutNullStreams } from "child_process";
+import { transcribe, transcriptionCost } from "./gateway-transcription";
+import { helperCommand } from "./native-helper";
+import type { OverlayState } from "../shared/types";
 
-function osascript(...lines) {
+function osascript(...lines: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
         execFile("osascript", lines.flatMap((line) => ["-e", line]), (error, stdout) => (error ? reject(error) : resolve(stdout.trim())));
     });
 }
 
 // Coupe le son du Mac pendant qu'on parle, comme Wispr Flow. Renvoie s'il était déjà coupé
-async function muteSystemAudio() {
+async function muteSystemAudio(): Promise<boolean> {
     try {
         return (await osascript("set wasMuted to output muted of (get volume settings)", "set volume with output muted", "return wasMuted")) === "true";
     } catch (error) {
-        console.error("Impossible de couper le son:", error.message);
+        console.error("Impossible de couper le son:", (error as Error).message);
         // On ne remettra pas le son qu'on n'a pas réussi à couper
         return true;
     }
 }
 
 // Remet le son, sauf s'il était déjà coupé avant la dictée
-async function restoreSystemAudio(wasMuted) {
+async function restoreSystemAudio(wasMuted: Promise<boolean>) {
     if (await wasMuted) return;
     osascript("set volume without output muted").catch((error) => console.error("Impossible de remettre le son:", error.message));
 }
 
 // Lit les lignes JSON d'un helper
-function onEvents(child, callback) {
+function onEvents(child: ChildProcessWithoutNullStreams, callback: (event: { type: string; [key: string]: any }) => void) {
     readline.createInterface({ input: child.stdout }).on("line", (line) => {
         try {
             callback(JSON.parse(line));
@@ -39,8 +40,38 @@ function onEvents(child, callback) {
     });
 }
 
-function watchDictation({ model, getPhrases, getLanguage, tryBegin, end, showOverlay, hideOverlay, setOverlayLevel, pasteText, onDictation }) {
-    let recording = null;
+export type Dictation = { text: string; durationMs: number; audioDurationSec: number; cost: number | null };
+
+export function watchDictation({
+    model,
+    getPhrases,
+    getLanguage,
+    tryBegin,
+    end,
+    showOverlay,
+    hideOverlay,
+    setOverlayLevel,
+    pasteText,
+    onDictation,
+}: {
+    model: string;
+    getPhrases: () => string[];
+    getLanguage: () => string;
+    tryBegin: () => boolean;
+    end: () => void;
+    showOverlay: (state: OverlayState) => void;
+    hideOverlay: (delay: number) => void;
+    setOverlayLevel: (level: number) => void;
+    pasteText: (text: string, onPasted?: () => void) => Promise<void>;
+    onDictation: (dictation: Dictation) => void;
+}) {
+    let recording: {
+        child: ChildProcessWithoutNullStreams;
+        dir: string;
+        startedAt: number;
+        exited: Promise<unknown>;
+        wasMuted: Promise<boolean>;
+    } | null = null;
 
     function start() {
         // Une correction ou une autre dictée est déjà en cours
@@ -131,5 +162,3 @@ function watchDictation({ model, getPhrases, getLanguage, tryBegin, end, showOve
         },
     };
 }
-
-module.exports = { watchDictation };

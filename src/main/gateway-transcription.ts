@@ -1,14 +1,28 @@
 // Transcription d'un fichier audio avec MAI-Transcribe-2, via le Vercel AI Gateway (réunions et dictée)
-const fs = require("fs");
-const path = require("path");
+import fs from "fs";
+import path from "path";
 
 const TRANSCRIPTION_URL = "https://ai-gateway.vercel.sh/v4/ai/transcription-model";
 // Un long appel peut prendre plusieurs minutes à transcrire
 const TRANSCRIPTION_TIMEOUT_MS = 15 * 60_000;
 
-const MEDIA_TYPES = { ".ogg": "audio/ogg", ".wav": "audio/wav" };
+const MEDIA_TYPES: Record<string, string> = { ".ogg": "audio/ogg", ".wav": "audio/wav" };
 
-async function transcribe(file, model, azureOptions) {
+// Mot horodaté renvoyé par Azure
+export type AzureWord = { text: string; offsetMilliseconds: number; durationMilliseconds: number };
+export type AzurePhrase = AzureWord & { speaker?: number; words?: AzureWord[] };
+
+// Réponse du Gateway (seuls les champs utilisés par Sténo)
+export type TranscriptionResult = {
+    text: string;
+    segments?: { text: string; startSecond: number; endSecond: number }[];
+    providerMetadata?: {
+        gateway?: { cost?: unknown };
+        azure?: { phrases?: AzurePhrase[] };
+    };
+};
+
+export async function transcribe(file: string, model: string, azureOptions: Record<string, unknown>): Promise<TranscriptionResult> {
     const response = await fetch(TRANSCRIPTION_URL, {
         method: "POST",
         headers: {
@@ -33,9 +47,7 @@ async function transcribe(file, model, azureOptions) {
 }
 
 // Coût total en dollars : le Gateway l'indique dans chaque réponse
-function transcriptionCost(results) {
+export function transcriptionCost(results: TranscriptionResult[]): number | null {
     const costs = results.map((result) => Number(result.providerMetadata?.gateway?.cost));
     return costs.every(Number.isFinite) ? costs.reduce((sum, cost) => sum + cost, 0) : null;
 }
-
-module.exports = { transcribe, transcriptionCost };

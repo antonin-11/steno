@@ -1,10 +1,11 @@
 // Récupère les nouveaux mémos de l'app Dictaphone (Voice Memos) et leur texte
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
-const { execFile } = require("child_process");
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { execFile } from "child_process";
+import type { VoiceStatus } from "../shared/types";
 
-const RECORDINGS_DIR = path.join(os.homedir(), "Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings");
+export const RECORDINGS_DIR = path.join(os.homedir(), "Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings");
 const DATABASE = path.join(RECORDINGS_DIR, "CloudRecordings.db");
 
 // Les dates Core Data comptent à partir du 1er janvier 2001
@@ -19,7 +20,17 @@ const MAX_ATTEMPTS = 3;
 const TRANSCRIPTION_URL = "https://ai-gateway.vercel.sh/v4/ai/transcription-model";
 const TRANSCRIPTION_TIMEOUT_MS = 120_000;
 
-function run(command, args) {
+export type Memo = {
+    id: string;
+    path: string;
+    duration: number;
+    label: string | null;
+    timestamp: number;
+    file: string;
+    date: string;
+};
+
+function run(command: string, args: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
         execFile(command, args, { maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) =>
             error ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout)
@@ -27,10 +38,10 @@ function run(command, args) {
     });
 }
 
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Lecture seule : on ne modifie jamais la base de Dictaphone
-async function listMemos() {
+async function listMemos(): Promise<Memo[]> {
     const output = await run("sqlite3", [
         "-readonly",
         "-json",
@@ -43,7 +54,7 @@ async function listMemos() {
     ]);
     if (!output.trim()) return [];
 
-    return JSON.parse(output).map((memo) => ({
+    return JSON.parse(output).map((memo: Omit<Memo, "file" | "date">) => ({
         ...memo,
         file: path.isAbsolute(memo.path) ? memo.path : path.join(RECORDINGS_DIR, memo.path),
         date: new Date(memo.timestamp * 1000).toISOString(),
@@ -51,7 +62,7 @@ async function listMemos() {
 }
 
 // Transcription faite par Apple, rangée dans un bloc "tsrp" du fichier audio
-function readAppleTranscript(file) {
+export function readAppleTranscript(file: string): string | null {
     const data = fs.readFileSync(file);
     const index = data.indexOf("tsrp");
     if (index < 4) return null;
@@ -60,7 +71,7 @@ function readAppleTranscript(file) {
         const size = data.readUInt32BE(index - 4);
         const json = JSON.parse(data.subarray(index + 4, index - 4 + size).toString("utf8"));
         // "runs" alterne morceaux de texte et numéros d'attributs
-        const text = json.attributedString.runs.filter((run) => typeof run === "string").join("");
+        const text = json.attributedString.runs.filter((run: unknown) => typeof run === "string").join("");
         return text.trim() || null;
     } catch {
         return null;
@@ -68,13 +79,13 @@ function readAppleTranscript(file) {
 }
 
 // Convertit le mémo (.qta ou .m4a) en .m4a AAC simple, accepté par les modèles de transcription
-async function convertToM4a(file) {
+async function convertToM4a(file: string): Promise<string> {
     const output = path.join(os.tmpdir(), `steno-${path.basename(file, path.extname(file))}.m4a`);
     await run("avconvert", ["--source", file, "--preset", "PresetAppleM4A", "--output", output, "--replace"]);
     return output;
 }
 
-async function transcribe(file, model) {
+async function transcribe(file: string, model: string): Promise<string> {
     const audioFile = await convertToM4a(file);
     try {
         const response = await fetch(TRANSCRIPTION_URL, {
@@ -103,14 +114,14 @@ async function transcribe(file, model) {
 }
 
 // Texte du mémo : transcription d'Apple si elle existe (gratuite), sinon transcription via le Gateway
-async function getMemoText(memo, model) {
+export async function getMemoText(memo: Memo, model: string): Promise<{ text: string; source: "apple" | "api" }> {
     const appleText = readAppleTranscript(memo.file);
     if (appleText) return { text: appleText, source: "apple" };
 
     return { text: await transcribe(memo.file, model), source: "api" };
 }
 
-async function isFileStable(file) {
+async function isFileStable(file: string): Promise<boolean> {
     const before = fs.statSync(file).size;
     await wait(FILE_STABLE_MS);
     return before > 0 && fs.statSync(file).size === before;
@@ -121,14 +132,26 @@ async function isFileStable(file) {
  * Au tout premier lancement, les mémos existants sont notés comme déjà vus et ignorés.
  * Une seule fois, les mémos des `backfillDays` derniers jours sont rattrapés (sauf ceux déjà importés).
  */
-function watchVoiceMemos({ stateFile, onNewMemo, onStatus, backfillDays = 0, isImported = () => false }) {
-    let known = null;
+export function watchVoiceMemos({
+    stateFile,
+    onNewMemo,
+    onStatus,
+    backfillDays = 0,
+    isImported = () => false,
+}: {
+    stateFile: string;
+    onNewMemo: (memo: Memo) => Promise<void>;
+    onStatus: (status: VoiceStatus) => void;
+    backfillDays?: number;
+    isImported?: (memoId: string) => boolean;
+}) {
+    let known: Set<string> | null = null;
     let backfillDone = false;
     let scanning = false;
     let rescanRequested = false;
-    const attempts = new Map();
+    const attempts = new Map<string, number>();
 
-    function saveState() {
+    function saveState(known: Set<string>) {
         fs.writeFileSync(stateFile, JSON.stringify({ known: [...known], backfillDone }, null, 2));
     }
 
@@ -146,7 +169,7 @@ function watchVoiceMemos({ stateFile, onNewMemo, onStatus, backfillDays = 0, isI
             if (known === null) {
                 try {
                     const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-                    known = new Set(state.known);
+                    known = new Set<string>(state.known);
                     backfillDone = Boolean(state.backfillDone);
                 } catch {
                     // Premier lancement : on ignore tout l'historique existant
@@ -157,11 +180,11 @@ function watchVoiceMemos({ stateFile, onNewMemo, onStatus, backfillDays = 0, isI
                 if (!backfillDone && backfillDays > 0) {
                     const since = Date.now() - backfillDays * 24 * 60 * 60 * 1000;
                     const recent = memos.filter((memo) => new Date(memo.date).getTime() >= since && !isImported(memo.id));
-                    recent.forEach((memo) => known.delete(memo.id));
+                    for (const memo of recent) known.delete(memo.id);
                     console.log(`Rattrapage : ${recent.length} mémo(s) des ${backfillDays} derniers jours à importer`);
                     backfillDone = true;
                 }
-                saveState();
+                saveState(known);
             }
 
             for (const memo of memos) {
@@ -176,16 +199,17 @@ function watchVoiceMemos({ stateFile, onNewMemo, onStatus, backfillDays = 0, isI
                 } catch (error) {
                     const count = (attempts.get(memo.id) ?? 0) + 1;
                     attempts.set(memo.id, count);
-                    console.error(`Mémo ${memo.path} : essai ${count}/${MAX_ATTEMPTS} échoué :`, error.message);
+                    console.error(`Mémo ${memo.path} : essai ${count}/${MAX_ATTEMPTS} échoué :`, (error as Error).message);
                     // Abandon après plusieurs échecs, pour ne pas réessayer (et payer) indéfiniment
                     if (count >= MAX_ATTEMPTS) known.add(memo.id);
                 }
-                saveState();
+                saveState(known);
             }
         } catch (error) {
-            const denied = /authorization denied|not permitted|unable to open/i.test(error.message);
-            onStatus({ available: false, error: denied ? "permission" : error.message });
-            if (!denied) console.error("Lecture de Dictaphone impossible :", error.message);
+            const message = (error as Error).message;
+            const denied = /authorization denied|not permitted|unable to open/i.test(message);
+            onStatus({ available: false, error: denied ? "permission" : message });
+            if (!denied) console.error("Lecture de Dictaphone impossible :", message);
         } finally {
             scanning = false;
             if (rescanRequested) {
@@ -195,7 +219,7 @@ function watchVoiceMemos({ stateFile, onNewMemo, onStatus, backfillDays = 0, isI
         }
     }
 
-    let debounce = null;
+    let debounce: NodeJS.Timeout | undefined;
     try {
         const watcher = fs.watch(RECORDINGS_DIR, () => {
             clearTimeout(debounce);
@@ -209,5 +233,3 @@ function watchVoiceMemos({ stateFile, onNewMemo, onStatus, backfillDays = 0, isI
     setInterval(scan, SCAN_INTERVAL_MS);
     scan();
 }
-
-module.exports = { watchVoiceMemos, getMemoText, readAppleTranscript, RECORDINGS_DIR };

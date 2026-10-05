@@ -1,13 +1,16 @@
 // Indicateur d'enregistrement : pilule flottante en bas au centre, ou point rouge dans la barre de menus
-const fs = require("fs");
-const path = require("path");
-const { BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen } = require("electron");
+import fs from "fs";
+import { BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen } from "electron";
+import { loadPage, PRELOAD } from "./load-page";
+import type { AudioLevels, IndicatorState } from "../shared/types";
 
 const PILL_WIDTH = 240;
 const PILL_HEIGHT = 50;
 const PILL_MARGIN = 16;
 // Durée d'affichage de « Transcription prête » ou de l'erreur
 const RESULT_DISPLAY_MS = 3000;
+
+type Mode = "pill" | "tray";
 
 // Point rouge dessiné en mémoire (16 pt en @2x), pour ne pas avoir de fichier d'icône
 function redDot() {
@@ -28,25 +31,27 @@ function redDot() {
     return nativeImage.createFromBitmap(buffer, { width: size, height: size, scaleFactor: 2 });
 }
 
-function formatElapsed(ms) {
+function formatElapsed(ms: number) {
     const total = Math.floor(ms / 1000);
     const minutes = Math.floor(total / 60);
     const seconds = String(total % 60).padStart(2, "0");
     return minutes >= 60 ? `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}:${seconds}` : `${minutes}:${seconds}`;
 }
 
-function createRecordingIndicator({ settingsFile, onStop }) {
-    let mode = "pill";
+export type RecordingIndicator = ReturnType<typeof createRecordingIndicator>;
+
+export function createRecordingIndicator({ settingsFile, onStop }: { settingsFile: string; onStop: () => void }) {
+    let mode: Mode = "pill";
     try {
         mode = JSON.parse(fs.readFileSync(settingsFile, "utf8")).indicator ?? mode;
     } catch {}
 
-    let state = "hidden";
+    let state: IndicatorState["state"] = "hidden";
     let label = "";
-    let startedAt = null;
-    let tray = null;
-    let trayTimer = null;
-    let hideTimer = null;
+    let startedAt: Date | null = null;
+    let tray: Tray | null = null;
+    let trayTimer: NodeJS.Timeout | undefined;
+    let hideTimer: NodeJS.Timeout | undefined;
 
     const pill = new BrowserWindow({
         width: PILL_WIDTH,
@@ -62,16 +67,16 @@ function createRecordingIndicator({ settingsFile, onStop }) {
         // Le clic sur stop doit marcher sans activer la fenêtre d'abord
         acceptFirstMouse: true,
         type: process.platform === "darwin" ? "panel" : undefined,
-        webPreferences: { preload: path.join(__dirname, "recording-preload.js") },
+        webPreferences: { preload: PRELOAD },
     });
     pill.setAlwaysOnTop(true, "screen-saver");
     pill.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    pill.loadFile(path.join(__dirname, "recording.html"));
+    loadPage(pill, "recording");
 
-    const sendState = () => pill.webContents.send("indicator-state", { state, startedAt: startedAt?.getTime() ?? null });
+    const sendState = () => pill.webContents.send("indicator-state", { state, startedAt: startedAt?.getTime() ?? null } satisfies IndicatorState);
     pill.webContents.on("did-finish-load", sendState);
 
-    function setMode(newMode) {
+    function setMode(newMode: Mode) {
         mode = newMode;
         let settings = {};
         try {
@@ -102,7 +107,7 @@ function createRecordingIndicator({ settingsFile, onStop }) {
             sendState();
             pill.showInactive();
         } else if (pill.isVisible()) {
-            pill.webContents.send("indicator-state", { state: "hidden" });
+            pill.webContents.send("indicator-state", { state: "hidden" } satisfies IndicatorState);
             // Laisse le temps à l'animation de disparition (sauf si la pilule doit réapparaître entre-temps)
             setTimeout(() => {
                 if (state === "hidden" || mode !== "pill") pill.hide();
@@ -111,7 +116,7 @@ function createRecordingIndicator({ settingsFile, onStop }) {
     }
 
     function trayTitle() {
-        if (state === "recording") return formatElapsed(Date.now() - startedAt);
+        if (state === "recording") return formatElapsed(Date.now() - (startedAt?.getTime() ?? Date.now()));
         if (state === "processing") return "Transcription…";
         if (state === "done") return "Transcription prête";
         return "Échec";
@@ -142,25 +147,25 @@ function createRecordingIndicator({ settingsFile, onStop }) {
         renderTray();
     }
 
-    function setState(newState) {
+    function setState(newState: IndicatorState["state"]) {
         clearTimeout(hideTimer);
         state = newState;
         render();
     }
 
     return {
-        showRecording(newLabel, start) {
+        showRecording(newLabel: string, start: Date) {
             label = newLabel;
             startedAt = start;
             setState("recording");
         },
-        setLevels(levels) {
+        setLevels(levels: AudioLevels) {
             if (state === "recording" && mode === "pill") pill.webContents.send("indicator-levels", levels);
         },
         showProcessing() {
             setState("processing");
         },
-        showResult(ok) {
+        showResult(ok: boolean) {
             setState(ok ? "done" : "error");
             hideTimer = setTimeout(() => setState("hidden"), RESULT_DISPLAY_MS);
         },
@@ -169,5 +174,3 @@ function createRecordingIndicator({ settingsFile, onStop }) {
         height: PILL_HEIGHT,
     };
 }
-
-module.exports = { createRecordingIndicator };

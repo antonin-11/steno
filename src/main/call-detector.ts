@@ -1,7 +1,7 @@
 // Détecte le début et la fin d'un appel Slack, Teams ou Google Meet à partir des apps qui utilisent le micro
-const readline = require("readline");
-const { spawn, execFile } = require("child_process");
-const { RECORDER } = require("./native-helper");
+import readline from "readline";
+import { spawn, execFile } from "child_process";
+import { RECORDER } from "./native-helper";
 
 // L'app doit utiliser le micro depuis ce délai pour qu'on considère qu'un appel a commencé
 const START_DELAY_MS = 5000;
@@ -10,7 +10,7 @@ const END_DELAY_MS = 5000;
 // Délai minimum entre deux lectures des onglets d'un même navigateur
 const TAB_CHECK_INTERVAL_MS = 5000;
 
-const CALL_APPS = {
+const CALL_APPS: Record<string, string> = {
     "com.tinyspeck.slackmacgap": "Slack",
     "com.microsoft.teams2": "Teams",
     "com.microsoft.teams": "Teams",
@@ -32,8 +32,13 @@ const MEETING_URLS = [
     { label: "Slack", pattern: /https:\/\/app\.slack\.com\// },
 ];
 
+// App qui utilise le micro (input) ou la sortie audio (output), d'après le helper
+type AudioApp = { bundleId: string; input: boolean; output: boolean };
+
+export type Call = { bundleId: string; label: string };
+
 // Réunion ouverte dans un des onglets du navigateur, ou null
-function findMeetingTab(bundleId) {
+function findMeetingTab(bundleId: string): Promise<string | null> {
     return new Promise((resolve) => {
         execFile("osascript", ["-e", `tell application id "${bundleId}" to get URL of every tab of every window`], (error, stdout) => {
             if (error) {
@@ -45,13 +50,13 @@ function findMeetingTab(bundleId) {
     });
 }
 
-function watchCalls({ onCallStart, onCallEnd }) {
-    let apps = [];
+export function watchCalls({ onCallStart, onCallEnd }: { onCallStart: (call: Call) => void; onCallEnd: () => void }) {
+    let apps: AudioApp[] = [];
     // Depuis quand chaque app utilise le micro sans interruption
-    const micSince = new Map();
-    const lastTabCheck = new Map();
-    let call = null;
-    let quietSince = null;
+    const micSince = new Map<string, number>();
+    const lastTabCheck = new Map<string, number>();
+    let call: Call | null = null;
+    let quietSince: number | null = null;
     let checkingTabs = false;
 
     const detector = spawn(RECORDER, ["detect"]);
@@ -75,7 +80,7 @@ function watchCalls({ onCallStart, onCallEnd }) {
         }
     });
 
-    async function findCall(now) {
+    async function findCall(now: number): Promise<Call | null> {
         for (const [bundleId, since] of micSince) {
             if (now - since < START_DELAY_MS) continue;
 
@@ -94,7 +99,8 @@ function watchCalls({ onCallStart, onCallEnd }) {
         const now = Date.now();
 
         if (call) {
-            const app = apps.find((a) => a.bundleId === call.bundleId);
+            const { bundleId } = call;
+            const app = apps.find((a) => a.bundleId === bundleId);
             if (app && (app.input || app.output)) {
                 quietSince = null;
             } else if (quietSince === null) {
@@ -132,5 +138,3 @@ function watchCalls({ onCallStart, onCallEnd }) {
         },
     };
 }
-
-module.exports = { watchCalls };

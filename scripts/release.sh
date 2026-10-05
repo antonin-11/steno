@@ -4,7 +4,7 @@
 set -e
 cd "$(dirname "$0")/.."
 
-# Dossier de données de l'app, gardé sous l'ancien nom (voir index.js)
+# Dossier de données de l'app, gardé sous l'ancien nom (voir src/main/index.ts)
 DATA="$HOME/Library/Application Support/spell-check-electron"
 # Exécutable de Sténo.app, quelle que soit la forme du « é » dans le chemin (macOS en a deux)
 INSTALLED_APP='/St[^/]*no\.app/Contents/MacOS/'
