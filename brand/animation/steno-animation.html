@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="fr">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Sténo, du mot au logo</title>
+        <style>
+            :root {
+                --paper: #f3f2ef;
+                --ink: #1f1f1e;
+                --muted: #6f6f6c;
+                --border: #e7e6e2;
+                --button: #fbfbfa;
+            }
+
+            * {
+                box-sizing: border-box;
+            }
+
+            html,
+            body {
+                height: 100%;
+                margin: 0;
+                background: var(--paper);
+                color: var(--ink);
+                font-family: -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
+                -webkit-font-smoothing: antialiased;
+            }
+
+            body {
+                display: grid;
+                grid-template-rows: 1fr auto;
+            }
+
+            #stage {
+                display: block;
+                width: 100%;
+                height: 100%;
+                min-height: 0;
+                cursor: pointer;
+            }
+
+            .controls {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                width: min(640px, 100% - 32px);
+                margin: 0 auto 28px;
+            }
+
+            .controls button {
+                height: 30px;
+                padding: 0 12px;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                background: var(--button);
+                color: var(--ink);
+                font: inherit;
+                font-size: 13px;
+                cursor: pointer;
+            }
+
+            .controls button[aria-pressed="true"] {
+                border-color: var(--ink);
+            }
+
+            .controls input {
+                flex: 1;
+                accent-color: #c96d4e;
+            }
+
+            .controls output {
+                width: 44px;
+                color: var(--muted);
+                font-size: 12px;
+                font-variant-numeric: tabular-nums;
+                text-align: right;
+            }
+
+            /* Mode capture (#t=…) : la scène seule, figée */
+            .still .controls {
+                display: none;
+            }
+        </style>
+    </head>
+    <body>
+        <svg id="stage" viewBox="-165 -95 330 190" role="img" aria-label="Le mot Sténo se transforme en logo"></svg>
+
+        <div class="controls">
+            <button id="replay" type="button">Rejouer</button>
+            <button id="slow" type="button" aria-pressed="false">Ralenti</button>
+            <input id="scrub" type="range" min="0" max="1000" value="0" aria-label="Position dans l'animation" />
+            <output id="clock">0,00 s</output>
+        </div>
+
+        <script src="../../logo-animation.js"></script>
+        <script>
+            const morph = createLogoMorph(document.getElementById("stage"));
+            const $ = (id) => document.getElementById(id);
+
+            // Le mot reste un instant, se transforme, puis le logo reste affiché
+            const HOLD = 0.7;
+            const DURATION = HOLD + morph.duration + 1.2;
+
+            function render(time) {
+                morph.render(Math.min(morph.duration, Math.max(0, time - HOLD)));
+            }
+
+            /* ---------- Lecture ---------- */
+
+            const scrub = $("scrub");
+            const clock = $("clock");
+            let speed = 1;
+            let playhead = 0;
+            let last = null;
+            let playing = false;
+
+            function show(time) {
+                playhead = Math.min(DURATION, Math.max(0, time));
+                render(playhead);
+                scrub.value = Math.round((playhead / DURATION) * 1000);
+                clock.value = `${playhead.toFixed(2).replace(".", ",")} s`;
+            }
+
+            function tick(now) {
+                if (!playing) return;
+                if (last !== null) show(playhead + ((now - last) / 1000) * speed);
+                last = now;
+                if (playhead >= DURATION) playing = false;
+                else requestAnimationFrame(tick);
+            }
+
+            function play() {
+                show(0);
+                last = null;
+                if (!playing) {
+                    playing = true;
+                    requestAnimationFrame(tick);
+                }
+            }
+
+            $("replay").addEventListener("click", play);
+            $("stage").addEventListener("click", play);
+            $("slow").addEventListener("click", (event) => {
+                speed = speed === 1 ? 0.25 : 1;
+                event.currentTarget.setAttribute("aria-pressed", speed !== 1);
+            });
+            scrub.addEventListener("input", () => {
+                playing = false;
+                show((scrub.value / 1000) * DURATION);
+            });
+            document.addEventListener("keydown", (event) => {
+                if (event.code === "Space") {
+                    event.preventDefault();
+                    play();
+                }
+            });
+
+            // #t=1.2 fige l'animation à 1,2 s, sans les contrôles (pour en capturer une image)
+            const still = location.hash.match(/t=([\d.]+)/);
+            if (still) {
+                document.body.classList.add("still");
+                show(Number(still[1]));
+            } else {
+                play();
+            }
+        </script>
+    </body>
+</html>

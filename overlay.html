@@ -69,29 +69,24 @@
 
             body.done .letters,
             body.error .letters,
-            body.listening .letters {
+            body.listening .letters,
+            body.curl .letters {
                 display: none;
             }
 
-            /* Barres qui suivent la voix pendant la dictée */
-            .bars {
+            /* Vague du logo qui ondule avec la voix pendant la dictée.
+               Elle ne rétrécit pas avec la pilule, et le rond qu'elle forme en s'enroulant déborde de sa boîte. */
+            .wave {
                 display: none;
-                align-items: center;
-                gap: 2px;
+                flex-shrink: 0;
+                width: 32px;
                 height: 14px;
+                overflow: visible;
             }
 
-            body.listening .bars {
-                display: flex;
-            }
-
-            .bars i {
-                width: 2px;
-                height: 14px;
-                border-radius: 1px;
-                background: rgba(255, 255, 255, 0.85);
-                transform: scaleY(0.15);
-                transition: transform 0.1s linear;
+            body.listening .wave,
+            body.curl .wave {
+                display: block;
             }
 
             body.done .icon.ok {
@@ -108,7 +103,7 @@
     <body>
         <div class="pill">
             <div class="letters"></div>
-            <div class="bars"><i></i><i></i><i></i><i></i></div>
+            <svg class="wave" viewBox="0 0 32 14" fill="none" stroke="#c96d4e" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"><path /></svg>
             <svg class="icon ok" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M3 8.5l3.2 3L13 4.5" />
             </svg>
@@ -175,23 +170,219 @@
                 }
             }
 
-            const bars = [...document.querySelectorAll(".bars i")];
-            // Les barres du milieu montent plus haut que celles du bord
-            const BAR_SCALES = [0.6, 1, 0.85, 0.5];
+            // Vague du logo (brand/logo/steno-logo.svg) : 1,5 période, amplitude de 6 pour 46 de long
+            const pill = document.querySelector(".pill");
+            const wavePath = document.querySelector(".wave path");
+            const WAVE_WIDTH = 32;
+            const WAVE_HEIGHT = 14;
+            const WAVE_STROKE = 4.4;
+            const WAVE_LENGTH = WAVE_WIDTH - WAVE_STROKE;
+            const LOGO_AMPLITUDE = (WAVE_LENGTH * 6) / 46;
+
+            let level = 0;
+            let smoothLevel = 0;
+            let phase = 0;
+            let lastFrame = null;
+            let waveFrame = null;
+
+            function wavePoints(amplitude, steps) {
+                const points = [];
+                for (let i = 0; i <= steps; i++) {
+                    const u = i / steps;
+                    points.push([WAVE_STROKE / 2 + u * WAVE_LENGTH, WAVE_HEIGHT / 2 - amplitude * Math.sin(u * 3 * Math.PI - phase)]);
+                }
+                return points;
+            }
+
+            const toPath = (points) => `M${points.map(([x, y]) => `${x.toFixed(2)} ${y.toFixed(2)}`).join("L")}`;
+
+            function drawWave(amplitude) {
+                wavePath.setAttribute("d", toPath(wavePoints(amplitude, 48)));
+            }
+
+            // Fin de la dictée : la vague s'enroule en un rond de chargement qui tourne,
+            // et la pilule se resserre en cercle autour de lui
+            const CURL_DURATION = 0.6;
+            const ROUND_PILL = 34;
+            const RING_RADIUS = 7;
+            // Arc de 290° au moment où il se referme, qui respire ensuite jusqu'à 255° en tournant à un tour par seconde
+            const RING_SWEEP = (290 * Math.PI) / 180;
+            const RING_BREATH = (35 * Math.PI) / 180;
+            const BREATH_PERIOD = 1.8;
+            const SPIN_SPEED = 2 * Math.PI;
+            // Le trait est vu comme une suite de petits pas de même longueur. La tête de la vague (à droite,
+            // là où elle avance) s'enroule la première et le reste suit, avec ce décalage sur la durée totale.
+            const STEPS = 48;
+            const STAGGER = 0.35;
+
+            // Pendant l'enroulement puis la rotation : { start, width, spin }
+            let curl = null;
+
+            const lerp = (a, b, t) => a + (b - a) * t;
+            const clamp = (t) => Math.min(1, Math.max(0, t));
+
+            // Même calcul que cubic-bezier() en CSS
+            function cubicBezier(x1, y1, x2, y2) {
+                const curve = (a, b, t) => 3 * a * t * (1 - t) ** 2 + 3 * b * t * t * (1 - t) + t ** 3;
+                return (x) => {
+                    let low = 0;
+                    let high = 1;
+                    let t = x;
+                    for (let i = 0; i < 24; i++) {
+                        if (curve(x1, x2, t) < x) low = t;
+                        else high = t;
+                        t = (low + high) / 2;
+                    }
+                    return curve(y1, y2, t);
+                };
+            }
+
+            // Départ en douceur, longue arrivée : la rotation prend le relais sans à-coup
+            const ease = cubicBezier(0.45, 0, 0.2, 1);
+
+            // STEPS + 1 points régulièrement espacés le long du tracé
+            function resample(points) {
+                const lengths = [0];
+                for (let i = 1; i < points.length; i++) {
+                    lengths.push(lengths[i - 1] + Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]));
+                }
+                const total = lengths[lengths.length - 1];
+                const samples = [];
+                let j = 0;
+                for (let i = 0; i <= STEPS; i++) {
+                    const at = (total * i) / STEPS;
+                    while (j < points.length - 2 && lengths[j + 1] < at) j++;
+                    const k = (at - lengths[j]) / (lengths[j + 1] - lengths[j] || 1);
+                    samples.push([lerp(points[j][0], points[j + 1][0], k), lerp(points[j][1], points[j + 1][1], k)]);
+                }
+                return samples;
+            }
+
+            // Centre de gravité du trait, chaque pas pesant sa longueur
+            function centroid(points) {
+                let weight = 0;
+                let x = 0;
+                let y = 0;
+                for (let i = 1; i < points.length; i++) {
+                    const w = Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
+                    weight += w;
+                    x += (w * (points[i - 1][0] + points[i][0])) / 2;
+                    y += (w * (points[i - 1][1] + points[i][1])) / 2;
+                }
+                return [x / weight, y / weight];
+            }
+
+            // Morphing au fil du trait (comme ribbonMorph dans logo-animation.js) : chaque petit pas tourne
+            // de sa direction dans la vague à celle qu'il a dans l'arc, puis on remet les pas bout à bout.
+            // Le trait se courbe comme un ruban qui s'enroule, au lieu de s'écraser.
+            function drawCurl(now, elapsed, amplitude) {
+                if (curl.start === null) curl.start = now;
+                const time = (now - curl.start) / 1000;
+                const progress = Math.min(1, time / CURL_DURATION);
+                const settled = ease(progress);
+                // La rotation s'amorce pendant l'enroulement et accélère avec lui : pas d'arrêt puis de départ
+                curl.spin += SPIN_SPEED * settled * elapsed;
+                // L'arc est le plus ouvert quand il se referme, puis il respire
+                const sweep = RING_SWEEP - (RING_BREATH * (1 - Math.cos((2 * Math.PI * (time - CURL_DURATION)) / BREATH_PERIOD))) / 2;
+                const ringStep = 2 * RING_RADIUS * Math.sin(sweep / STEPS / 2);
+
+                const samples = resample(wavePoints(amplitude, 96));
+                const points = [[0, 0]];
+                for (let i = 0; i < STEPS; i++) {
+                    const along = (i + 0.5) / STEPS;
+                    const [a, b] = [samples[i], samples[i + 1]];
+                    const local = clamp((progress - STAGGER * (1 - along)) / (1 - STAGGER));
+                    const bend = ease(local);
+                    // Chaque morceau cesse d'onduler à mesure qu'il s'enroule : la queue ondule encore quand la tête tourne déjà
+                    const calm = ease(Math.min(1, local / 0.75));
+                    // L'arc a son milieu en haut : la vague se cambre et ses bouts descendent l'un vers l'autre
+                    const heading = (1 - calm) * Math.atan2(b[1] - a[1], b[0] - a[0]) + bend * (along - 0.5) * sweep + curl.spin;
+                    const length = lerp(Math.hypot(b[0] - a[0], b[1] - a[1]), ringStep, bend);
+                    const [x, y] = points[i];
+                    points.push([x + length * Math.cos(heading), y + length * Math.sin(heading)]);
+                }
+
+                // Le trait glisse du centre de gravité de la vague à celui de l'arc, dont le cercle est au centre de la pilule
+                const offset = (RING_RADIUS * Math.sin(sweep / 2)) / (STEPS * Math.tan(sweep / STEPS / 2));
+                const [fromX, fromY] = centroid(samples);
+                const [cx, cy] = centroid(points);
+                const dx = lerp(fromX, WAVE_WIDTH / 2 + offset * Math.sin(curl.spin), settled) - cx;
+                const dy = lerp(fromY, WAVE_HEIGHT / 2 - offset * Math.cos(curl.spin), settled) - cy;
+                wavePath.setAttribute("d", toPath(points.map(([x, y]) => [x + dx, y + dy])));
+                pill.style.width = `${lerp(curl.width, ROUND_PILL, settled)}px`;
+            }
+
+            // La vague avance en continu ; la voix la fait monter jusqu'à l'amplitude du logo et l'accélère
+            function wave(now) {
+                const elapsed = lastFrame === null ? 0 : Math.min(0.1, (now - lastFrame) / 1000);
+                lastFrame = now;
+                // Le niveau n'arrive que toutes les 100 ms : on le lisse, vite à la montée, plus doucement à la descente
+                smoothLevel += (level - smoothLevel) * Math.min(1, elapsed * (level > smoothLevel ? 18 : 6));
+                phase += elapsed * (5 + 12 * smoothLevel);
+                const amplitude = LOGO_AMPLITUDE * (0.45 + 0.85 * smoothLevel);
+                if (curl) drawCurl(now, elapsed, amplitude);
+                else drawWave(amplitude);
+                waveFrame = requestAnimationFrame(wave);
+            }
+
+            // Arrête la boucle d'animation et rend à la pilule sa largeur naturelle
+            function stopWave() {
+                cancelAnimationFrame(waveFrame);
+                waveFrame = null;
+                curl = null;
+                pill.style.width = "";
+            }
 
             // Appelé depuis le process principal pendant la dictée, avec un niveau entre 0 et 1
-            window.setLevel = (level) => {
-                bars.forEach((bar, i) => (bar.style.transform = `scaleY(${Math.max(0.15, level * BAR_SCALES[i])})`));
+            window.setLevel = (value) => {
+                level = value;
             };
+
+            let currentState = "hidden";
 
             // Appelé depuis le process principal : "listening", "loading", "done", "error" ou "hidden"
             window.setState = (state) => {
-                document.body.className = state === "hidden" ? "" : `visible ${state}`;
-                if (state === "listening") window.setLevel(0);
-
+                const previous = currentState;
+                currentState = state;
                 cycleId++;
+                const id = cycleId;
+
+                // Transcription d'une dictée : la vague continue sur sa lancée et s'enroule.
+                // La correction (Cmd+O) arrive directement en "loading" et garde ses lettres.
+                if (state === "loading" && waveFrame !== null && (previous === "listening" || previous === "loading")) {
+                    if (!curl) {
+                        level = 0;
+                        curl = { start: null, width: pill.offsetWidth, spin: 0 };
+                    }
+                    document.body.className = "visible loading curl";
+                    return;
+                }
+                // Le rond continue de tourner pendant que la bulle s'efface
+                if (state === "hidden" && curl) {
+                    document.body.className = "curl";
+                    setTimeout(() => {
+                        if (id === cycleId) {
+                            stopWave();
+                            document.body.className = "";
+                        }
+                    }, 250);
+                    return;
+                }
+
+                document.body.className = state === "hidden" ? "" : `visible ${state}`;
+                // Une seule boucle d'animation à la fois, même si "listening" arrive deux fois
+                if (state === "listening" && (waveFrame === null || curl)) {
+                    stopWave();
+                    level = smoothLevel = phase = 0;
+                    lastFrame = null;
+                    drawWave(LOGO_AMPLITUDE * 0.45);
+                    waveFrame = requestAnimationFrame(wave);
+                } else if (state !== "listening") {
+                    stopWave();
+                }
+
                 if (state === "loading") {
-                    runCycle(cycleId);
+                    runCycle(id);
                 }
             };
         </script>

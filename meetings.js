@@ -5,10 +5,7 @@ const readline = require("readline");
 const { pathToFileURL } = require("url");
 const { spawn, execFile } = require("child_process");
 const { transcribe, transcriptionCost } = require("./gateway-transcription");
-
-const RECORDER = path.join(__dirname, "bin", "steno-recorder");
-// Rend le helper responsable de ses propres permissions macOS (micro, son système)
-const DISCLAIM_EXEC = path.join(__dirname, "bin", "disclaim-exec");
+const { helperCommand } = require("./native-helper");
 
 // Opus mono : format accepté par MAI-Transcribe-2, et léger à envoyer
 const OPUS = ["-ac", "1", "-c:a", "libopus", "-b:a", "24k"];
@@ -158,7 +155,7 @@ function createMeetings({ dir, model, indicator, onChange }) {
         fs.mkdirSync(meetingDir(meeting.id));
         save(meeting);
 
-        const child = spawn(DISCLAIM_EXEC, [RECORDER, "record", "--out", meetingDir(meeting.id)]);
+        const child = spawn(...helperCommand("record", "--out", meetingDir(meeting.id)));
         const current = { meeting, child, stopping: false, error: null };
         current.exited = new Promise((resolve) => child.on("close", resolve));
         recording = current;
