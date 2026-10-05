@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+@theme {
+    /* Couleurs de Sténo : papier, encre et terracotta viennent de brand/README.md */
+    --color-paper: #f3f2ef;
+    --color-panel: #fbfbfa;
+    --color-panel-border: #e9e8e4;
+    --color-card: #fcfcfb;
+    --color-border: #e7e6e2;
+    --color-row-border: #ecebe7;
+    --color-hover: #f4f3ef;
+    --color-nav-hover: #ecebe7;
+    --color-nav-active: #e8e6e1;
+    --color-ink: #1f1f1e;
+    --color-muted: #6f6f6c;
+    --color-faint: #9b9b97;
+    --color-terracotta: #c96d4e;
+
+    --font-sans: -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
+    /* Chiffres des statistiques */
+    --font-serif: Charter, "Bitstream Charter", "Iowan Old Style", serif;
+    --font-mono: "SF Mono", Menlo, monospace;
+
+    /* Pilule d'enregistrement : point rouge qui pulse, barres qui ondulent pendant la transcription */
+    --animate-recording-dot: recording-dot 1.6s ease-in-out infinite;
+    --animate-level-wave: level-wave 0.9s ease-in-out infinite;
+
+    @keyframes recording-dot {
+        50% {
+            opacity: 0.35;
+        }
+    }
+
+    @keyframes level-wave {
+        0%,
+        100% {
+            transform: scaleY(0.35);
+        }
+        50% {
+            transform: scaleY(1);
+        }
+    }
+}
+
+/* Valeurs par défaut du navigateur, que la remise à zéro de Tailwind remplace */
+@layer base {
+    html {
+        line-height: normal;
+    }
+
+    button:not(:disabled) {
+        cursor: pointer;
+    }
+
+    ::placeholder {
+        color: revert;
+    }
+}

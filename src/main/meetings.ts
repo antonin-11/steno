@@ -1,0 +1,283 @@
+// Enregistre les appels détectés (micro + son du Mac) puis les transcrit avec MAI-Transcribe-2 via le Gateway
+import fs from "fs";
+import path from "path";
+import readline from "readline";
+import { spawn, execFile, type ChildProcessWithoutNullStreams } from "child_process";
+import { transcribe, transcriptionCost, type AzurePhrase, type TranscriptionResult } from "./gateway-transcription";
+import { RECORDER, helperCommand } from "./native-helper";
+import type { Call } from "./call-detector";
+import type { RecordingIndicator } from "./recording-indicator";
+import type { Meeting, MeetingDetails, MeetingSummary, TimedWord, Utterance } from "../shared/types";
+
+// Opus mono : format accepté par MAI-Transcribe-2, et léger à envoyer
+const OPUS = ["-ac", "1", "-c:a", "libopus", "-b:a", "24k"];
+
+// Silence entre deux mots à partir duquel on coupe une phrase
+const PAUSE_SECONDS = 1;
+
+// Phrase horodatée ; speaker est le numéro d'Azure, remplacé ensuite par "me", "s0", "s1"…
+type Phrase = Omit<Utterance, "speaker"> & { speaker?: number | string };
+
+function run(command: string, args: string[]): Promise<string> {
+    return new Promise((resolve, reject) => {
+        execFile(command, args, { maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) =>
+            error ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout)
+        );
+    });
+}
+
+const ffmpeg = (args: string[]) => run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...args]);
+
+// Compresse les deux pistes, et les mixe en un seul fichier pour l'écoute.
+// Avant, la voix des autres captée par le micro (appel sur les haut-parleurs) en est retirée, avec le son du Mac comme référence
+async function encodeAudio(dir: string) {
+    const file = (name: string) => path.join(dir, name);
+    await run(RECORDER, ["cancel-echo", "--mic", file("mic.wav"), "--reference", file("system.wav"), "--out", file("mic-clean.wav")]);
+    // Micro avant annulation d'écho, gardé le temps de vérifier le résultat sur de vrais appels
+    await ffmpeg(["-i", file("mic.wav"), ...OPUS, file("mic-raw.ogg")]);
+    fs.renameSync(file("mic-clean.wav"), file("mic.wav"));
+    await ffmpeg(["-i", file("mic.wav"), ...OPUS, file("mic.ogg")]);
+    await ffmpeg(["-i", file("system.wav"), ...OPUS, file("system.ogg")]);
+    await ffmpeg([
+        "-i", file("mic.wav"),
+        "-i", file("system.wav"),
+        "-filter_complex", "amix=inputs=2:duration=longest:normalize=0",
+        ...OPUS,
+        file("call.ogg"),
+    ]);
+    fs.rmSync(file("mic.wav"));
+    fs.rmSync(file("system.wav"));
+}
+
+// Azure renvoie une seule phrase par interlocuteur tant que personne d'autre ne parle sur la piste :
+// on la coupe aux pauses grâce aux horodatages des mots, pour pouvoir intercaler les deux pistes.
+// Les mots horodatés sont gardés pour surligner celui en cours pendant l'écoute
+function splitAtPauses(phrase: AzurePhrase): Phrase[] {
+    if (!phrase.words?.length) {
+        const end = (phrase.offsetMilliseconds + phrase.durationMilliseconds) / 1000;
+        return [{ speaker: phrase.speaker, start: phrase.offsetMilliseconds / 1000, end, text: phrase.text }];
+    }
+
+    const parts: (Phrase & { words: TimedWord[] })[] = [];
+    for (const word of phrase.words) {
+        const start = word.offsetMilliseconds / 1000;
+        const end = (word.offsetMilliseconds + word.durationMilliseconds) / 1000;
+        const timedWord = { text: word.text, start, end };
+        const last = parts.at(-1);
+        if (last && start - last.end < PAUSE_SECONDS) {
+            last.text += ` ${word.text}`;
+            last.end = end;
+            last.words.push(timedWord);
+        } else {
+            parts.push({ speaker: phrase.speaker, start, end, text: word.text, words: [timedWord] });
+        }
+    }
+    return parts;
+}
+
+// Phrases horodatées (en secondes). Le numéro de speaker n'existe que dans les métadonnées d'Azure
+function toPhrases(result: TranscriptionResult): Phrase[] {
+    const phrases = result.providerMetadata?.azure?.phrases;
+    if (phrases) return phrases.flatMap(splitAtPauses);
+    if (result.segments?.length) {
+        return result.segments.map((segment) => ({ start: segment.startSecond, end: segment.endSecond, text: segment.text }));
+    }
+    return result.text ? [{ start: 0, end: 0, text: result.text }] : [];
+}
+
+// Piste micro = « Moi » ; piste système = les autres, séparés par la diarisation.
+// Les réponses de l'API sont gardées telles quelles (mic.json, system.json) : on peut refaire
+// la mise en forme sans repayer la transcription
+async function transcribeMeeting(dir: string, model: string) {
+    const [micResult, systemResult] = await Promise.all([
+        transcribe(path.join(dir, "mic.ogg"), model, { timestamps: "word" }),
+        transcribe(path.join(dir, "system.ogg"), model, { timestamps: "word", diarization: { enabled: true } }),
+    ]);
+    fs.writeFileSync(path.join(dir, "mic.json"), JSON.stringify(micResult, null, 2));
+    fs.writeFileSync(path.join(dir, "system.json"), JSON.stringify(systemResult, null, 2));
+
+    return { ...buildTranscript(micResult, systemResult), cost: transcriptionCost([micResult, systemResult]) };
+}
+
+
+// Conversation affichée par l'app, construite à partir des deux réponses brutes de l'API
+function buildTranscript(micResult: TranscriptionResult, systemResult: TranscriptionResult) {
+    const phrases: Utterance[] = [
+        ...toPhrases(micResult).map((phrase) => ({ ...phrase, speaker: "me" })),
+        ...toPhrases(systemResult).map((phrase) => ({ ...phrase, speaker: `s${phrase.speaker ?? 0}` })),
+    ]
+        .filter((phrase) => phrase.text.trim())
+        .sort((a, b) => a.start - b.start);
+
+    // Les phrases consécutives d'une même personne forment un seul bloc
+    const utterances: Utterance[] = [];
+    for (const phrase of phrases) {
+        const last = utterances.at(-1);
+        if (last?.speaker === phrase.speaker) {
+            last.text += ` ${phrase.text}`;
+            last.end = phrase.end;
+            last.words = last.words && phrase.words ? [...last.words, ...phrase.words] : undefined;
+        } else {
+            utterances.push({ ...phrase });
+        }
+    }
+
+    const speakers: Record<string, string> = { me: "Moi" };
+    for (const { speaker } of utterances) {
+        if (!(speaker in speakers)) speakers[speaker] = `Interlocuteur ${Object.keys(speakers).length}`;
+    }
+
+    return { speakers, utterances };
+}
+
+export function createMeetings({
+    dir,
+    model,
+    indicator,
+    onChange,
+}: {
+    dir: string;
+    model: string;
+    indicator: RecordingIndicator;
+    onChange: (list: MeetingSummary[]) => void;
+}) {
+    fs.mkdirSync(dir, { recursive: true });
+    let recording: {
+        meeting: Meeting;
+        child: ChildProcessWithoutNullStreams;
+        stopping: boolean;
+        error: string | null;
+        exited: Promise<number | null>;
+    } | null = null;
+
+    const meetingDir = (id: string) => path.join(dir, id);
+    const audioFile = (id: string) => path.join(meetingDir(id), "call.ogg");
+    const read = (id: string): Meeting => JSON.parse(fs.readFileSync(path.join(meetingDir(id), "meeting.json"), "utf8"));
+
+    // Liste sans les transcriptions complètes, pour garder les envois à la fenêtre légers
+    function list(): MeetingSummary[] {
+        return fs
+            .readdirSync(dir)
+            .flatMap((id) => {
+                try {
+                    const { utterances, speakers, ...summary } = read(id);
+                    return [{ ...summary, preview: (utterances ?? []).map((u) => u.text).join(" ").slice(0, 200) }];
+                } catch {
+                    return [];
+                }
+            })
+            .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+    }
+
+    function save(meeting: Meeting) {
+        fs.writeFileSync(path.join(meetingDir(meeting.id), "meeting.json"), JSON.stringify(meeting, null, 2));
+        onChange(list());
+    }
+
+    function startRecording(call: Call) {
+        if (recording) return;
+
+        const startedAt = new Date();
+        const meeting: Meeting = { id: startedAt.getTime().toString(36), app: call.bundleId, label: call.label, startedAt: startedAt.toISOString(), status: "recording" };
+        fs.mkdirSync(meetingDir(meeting.id));
+        save(meeting);
+
+        const child = spawn(...helperCommand("record", "--out", meetingDir(meeting.id)));
+        const current = {
+            meeting,
+            child,
+            stopping: false,
+            error: null as string | null,
+            exited: new Promise<number | null>((resolve) => child.on("close", resolve)),
+        };
+        recording = current;
+
+        child.on("error", (error) => (current.error = `Helper d'enregistrement introuvable (lancer pnpm run build:native) : ${error.message}`));
+        child.stderr.on("data", (data) => console.error("record:", data.toString().trim()));
+        readline.createInterface({ input: child.stdout }).on("line", (line) => {
+            let event;
+            try {
+                event = JSON.parse(line);
+            } catch {
+                return;
+            }
+            if (event.type === "level") indicator.setLevels(event);
+            if (event.type === "error") {
+                current.error = event.message;
+                console.error("Enregistrement:", event.message);
+            }
+        });
+
+        // Le helper s'arrête de lui-même seulement en cas d'échec (permission refusée, etc.)
+        current.exited.then((code) => {
+            if (current.stopping) return;
+            if (recording === current) recording = null;
+            save({ ...meeting, status: "error", error: current.error ?? `Le helper d'enregistrement s'est arrêté (code ${code})` });
+            indicator.showResult(false);
+        });
+
+        indicator.showRecording(call.label, startedAt);
+    }
+
+    // Fin d'appel ou clic sur stop ; sans effet si rien n'est en cours d'enregistrement
+    async function stopRecording() {
+        if (!recording) return;
+        const { meeting, child, exited } = recording;
+        recording.stopping = true;
+        recording = null;
+
+        child.kill("SIGTERM");
+        await exited;
+
+        const endedAt = new Date();
+        let updated: Meeting = {
+            ...meeting,
+            endedAt: endedAt.toISOString(),
+            durationSec: Math.round((endedAt.getTime() - new Date(meeting.startedAt).getTime()) / 1000),
+            status: "processing",
+        };
+        save(updated);
+        indicator.showProcessing();
+
+        try {
+            await encodeAudio(meetingDir(meeting.id));
+            updated = { ...updated, ...(await transcribeMeeting(meetingDir(meeting.id), model)), status: "done" };
+            indicator.showResult(true);
+        } catch (error) {
+            console.error("Échec du traitement de la réunion:", error);
+            updated = { ...updated, status: "error", error: (error as Error).message };
+            indicator.showResult(false);
+        }
+        save(updated);
+    }
+
+    function get(id: string): MeetingDetails {
+        return { ...read(id), hasAudio: fs.existsSync(audioFile(id)) };
+    }
+
+    // Audio de la réunion, lu par la fenêtre depuis la mémoire : une URL file:// ne se charge pas
+    // depuis le serveur de dev, et un protocole maison empêcherait d'avancer ou de reculer dans l'écoute
+    function audio(id: string) {
+        return fs.promises.readFile(audioFile(id));
+    }
+
+    function renameSpeaker(id: string, speaker: string, name: string) {
+        const meeting = read(id);
+        if (name.trim() && meeting.speakers) meeting.speakers[speaker] = name.trim();
+        save(meeting);
+        return get(id);
+    }
+
+    function remove(id: string) {
+        if (recording?.meeting.id === id) return;
+        fs.rmSync(meetingDir(id), { recursive: true, force: true });
+        onChange(list());
+    }
+
+    // À la fermeture de l'app : le helper ne doit pas continuer à tenir le micro
+    function abort() {
+        recording?.child.kill("SIGTERM");
+    }
+
+    return { startRecording, stopRecording, list, get, audio, renameSpeaker, remove, abort };
+}

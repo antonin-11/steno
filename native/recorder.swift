@@ -1,7 +1,9 @@
 // Helper natif de Sténo pour les appels :
 //   detect             écrit (en JSON, sur stdout) les apps qui utilisent le micro ou la sortie audio
-//   record --out <dir> enregistre le micro (mic.wav) et tout le son du Mac (system.wav)
+//   record --out <dir> enregistre le micro (mic.wav) et tout le son du Mac (system.wav), calés sur la même horloge
 //                      avec --mic-only, seulement le micro (dictée)
+//   cancel-echo --mic <wav> --reference <wav> --out <wav>
+//                      retire du micro le son du Mac qu'il a capté (annulation d'écho de WebRTC)
 //   hotkey             écrit le début (Option droite + Cmd droite enfoncées) et la fin (l'une relâchée) de la dictée
 //   paste              simule Cmd+V dans l'application active
 //
@@ -120,15 +122,38 @@ func runDetect() -> Never {
 
 // ---------- record ----------
 
-// Convertit l'audio reçu en 16 kHz mono, l'écrit dans un WAV et mesure son niveau
+// Écart toléré entre la position d'une piste et l'horloge de la machine avant de le combler par du silence
+let maxDrift = 0.05
+
+func log(_ message: String) {
+    FileHandle.standardError.write(Data((message + "\n").utf8))
+}
+
+// Convertit l'audio reçu en 16 kHz mono, l'écrit dans un WAV et mesure son niveau.
+// Chaque échantillon est placé selon l'heure à laquelle il a été capté, comptée depuis `startHostTime` :
+// les deux pistes d'un appel restent calées même si l'une démarre plus tard ou perd des blocs en route
 final class TrackWriter {
     private let file: AVAudioFile
+    private let name: String
+    private let startHostTime: UInt64
     private let outputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false)!
     private var converter: AVAudioConverter?
+    private var framesWritten: AVAudioFramePosition = 0
+    private var started = false
     private let levelLock = NSLock()
     private var peak: Float = 0
 
-    init(url: URL) throws {
+    // Une seconde de silence, écrite autant de fois que nécessaire
+    private lazy var silence: AVAudioPCMBuffer = {
+        let buffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: AVAudioFrameCount(sampleRate))!
+        buffer.frameLength = buffer.frameCapacity
+        memset(buffer.floatChannelData![0], 0, Int(buffer.frameCapacity) * MemoryLayout<Float>.size)
+        return buffer
+    }()
+
+    init(url: URL, name: String, startHostTime: UInt64) throws {
+        self.name = name
+        self.startHostTime = startHostTime
         file = try AVAudioFile(
             forWriting: url,
             settings: [
@@ -143,9 +168,13 @@ final class TrackWriter {
         )
     }
 
-    func write(_ buffer: AVAudioPCMBuffer) {
+    // `hostTime` : instant où le premier échantillon du bloc a été capté, sur l'horloge de la machine
+    func write(_ buffer: AVAudioPCMBuffer, at hostTime: UInt64?) {
         if converter == nil || converter!.inputFormat != buffer.format {
             converter = AVAudioConverter(from: buffer.format, to: outputFormat)
+            // Seul le premier canal est gardé, comme le fait déjà le convertisseur pour 2 canaux. Il faut le dire
+            // au-delà (ex. micro en 9 canaux) : sans ça, la conversion ne rend que du silence
+            converter?.channelMap = [0]
         }
         guard let converter,
               let output = AVAudioPCMBuffer(
@@ -165,13 +194,35 @@ final class TrackWriter {
         }
         guard output.frameLength > 0 else { return }
 
+        // Début plus tardif que l'autre piste, ou blocs perdus : on comble avec du silence pour rester à l'heure
+        if let hostTime {
+            let elapsed = AVAudioTime.seconds(forHostTime: hostTime) - AVAudioTime.seconds(forHostTime: startHostTime)
+            let missing = AVAudioFramePosition(elapsed * sampleRate) - framesWritten
+            if missing > AVAudioFramePosition(maxDrift * sampleRate) {
+                if started { log("\(name) : \(String(format: "%.2f", Double(missing) / sampleRate)) s perdues, remplacées par du silence") }
+                writeSilence(missing)
+            }
+        }
+        started = true
+
         try? file.write(from: output)
+        framesWritten += AVAudioFramePosition(output.frameLength)
 
         let samples = UnsafeBufferPointer(start: output.floatChannelData![0], count: Int(output.frameLength))
         let rms = sqrt(samples.reduce(0) { $0 + $1 * $1 } / Float(samples.count))
         levelLock.lock()
         peak = max(peak, rms)
         levelLock.unlock()
+    }
+
+    private func writeSilence(_ frames: AVAudioFramePosition) {
+        var remaining = frames
+        while remaining > 0 {
+            silence.frameLength = AVAudioFrameCount(min(remaining, AVAudioFramePosition(silence.frameCapacity)))
+            try? file.write(from: silence)
+            remaining -= AVAudioFramePosition(silence.frameLength)
+        }
+        framesWritten += frames
     }
 
     // Écrit l'en-tête définitif du WAV
@@ -237,9 +288,10 @@ final class SystemAudioCapture {
         try check(AudioObjectGetPropertyData(tapID, &formatAddr, 0, nil, &formatSize, &streamDescription), "lecture du format audio")
         guard let format = AVAudioFormat(streamDescription: &streamDescription) else { throw RecorderError("format audio système illisible") }
 
-        try check(AudioDeviceCreateIOProcIDWithBlock(&ioProcID, deviceID, queue) { [writer] _, inputData, _, _, _ in
+        try check(AudioDeviceCreateIOProcIDWithBlock(&ioProcID, deviceID, queue) { [writer] _, inputData, inputTime, _, _ in
             if let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: inputData, deallocator: nil) {
-                writer.write(buffer)
+                let time = inputTime.pointee
+                writer.write(buffer, at: time.mFlags.contains(.hostTimeValid) ? time.mHostTime : nil)
             }
         }, "lecture du son système")
         // C'est ici que macOS demande la permission « Enregistrement audio système »
@@ -255,6 +307,102 @@ final class SystemAudioCapture {
         if tapID != kAudioObjectUnknown { AudioHardwareDestroyProcessTap(tapID) }
         // Attend la fin du dernier bloc audio en cours d'écriture
         queue.sync {}
+    }
+}
+
+// Micro via AVAudioEngine. macOS l'arrête sans prévenir quand la configuration audio change (casque branché,
+// autre app qui ouvre le micro à une autre fréquence…) : on le relance alors, sur un moteur neuf qui suit le micro
+// par défaut du moment. Le trou est comblé par du silence, la piste reste calée.
+// Approche reprise de quill (MIT, github.com/humanitas-labs/quill) : relance sur changement de configuration,
+// et surveillance de l'arrivée du son pour les arrêts que macOS ne signale pas
+final class MicrophoneCapture {
+    // Sans aucun bloc audio pendant ce délai (le silence en produit aussi), le micro est considéré comme arrêté
+    private let stallSeconds = 3.0
+    // Les changements de configuration arrivent souvent en rafale : on attend qu'ils soient passés
+    private let restartDelay = 0.75
+
+    private let writer: TrackWriter
+    private var engine: AVAudioEngine?
+    private var configurationObserver: NSObjectProtocol?
+    private var watchdog: DispatchSourceTimer?
+    private var pendingRestart: DispatchWorkItem?
+    private let aliveLock = NSLock()
+    private var lastBufferAt = Date()
+
+    init(writer: TrackWriter) {
+        self.writer = writer
+    }
+
+    // Appelé sur la file principale, comme tout le reste de la classe
+    func start() throws {
+        try startEngine()
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 1, repeating: 1)
+        timer.setEventHandler { [weak self] in self?.checkAlive() }
+        timer.resume()
+        watchdog = timer
+    }
+
+    func stop() {
+        watchdog?.cancel()
+        pendingRestart?.cancel()
+        stopEngine()
+    }
+
+    private func startEngine() throws {
+        let engine = AVAudioEngine()
+        let input = engine.inputNode
+        input.installTap(onBus: 0, bufferSize: 4096, format: input.outputFormat(forBus: 0)) { [weak self, writer] buffer, when in
+            self?.markAlive()
+            writer.write(buffer, at: when.isHostTimeValid ? when.hostTime : nil)
+        }
+        configurationObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+            self?.scheduleRestart("changement de configuration audio")
+        }
+        self.engine = engine
+        markAlive()
+        try engine.start()
+    }
+
+    private func stopEngine() {
+        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
+        configurationObserver = nil
+        engine?.inputNode.removeTap(onBus: 0)
+        engine?.stop()
+        engine = nil
+    }
+
+    private func markAlive() {
+        aliveLock.lock()
+        lastBufferAt = Date()
+        aliveLock.unlock()
+    }
+
+    private func checkAlive() {
+        aliveLock.lock()
+        let silentFor = Date().timeIntervalSince(lastBufferAt)
+        aliveLock.unlock()
+        if silentFor >= stallSeconds && pendingRestart == nil {
+            scheduleRestart("plus de son depuis \(Int(silentFor)) s")
+        }
+    }
+
+    private func scheduleRestart(_ reason: String) {
+        pendingRestart?.cancel()
+        let restart = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingRestart = nil
+            log("micro : \(reason), relance")
+            self.stopEngine()
+            do {
+                try self.startEngine()
+            } catch {
+                // Le micro n'est peut-être pas encore disponible : la surveillance réessaiera dans quelques secondes
+                log("micro : relance impossible (\(error))")
+            }
+        }
+        pendingRestart = restart
+        DispatchQueue.main.asyncAfter(deadline: .now() + restartDelay, execute: restart)
     }
 }
 
@@ -277,24 +425,21 @@ func runRecord(outputDir: URL, micOnly: Bool) -> Never {
     permission.wait()
     if !micAllowed { fail("Accès au micro refusé") }
 
+    // Origine commune des deux pistes : chacune commence au lancement de l'enregistrement
+    let startHostTime = mach_absolute_time()
     let micWriter: TrackWriter
     let systemWriter: TrackWriter?
     do {
-        micWriter = try TrackWriter(url: outputDir.appendingPathComponent("mic.wav"))
-        systemWriter = micOnly ? nil : try TrackWriter(url: outputDir.appendingPathComponent("system.wav"))
+        micWriter = try TrackWriter(url: outputDir.appendingPathComponent("mic.wav"), name: "micro", startHostTime: startHostTime)
+        systemWriter = micOnly ? nil : try TrackWriter(url: outputDir.appendingPathComponent("system.wav"), name: "son du Mac", startHostTime: startHostTime)
     } catch {
         fail("Impossible de créer les fichiers audio : \(error)")
     }
 
-    let engine = AVAudioEngine()
-    let input = engine.inputNode
-    input.installTap(onBus: 0, bufferSize: 4096, format: input.outputFormat(forBus: 0)) { buffer, _ in
-        micWriter.write(buffer)
-    }
-
+    let mic = MicrophoneCapture(writer: micWriter)
     let system = systemWriter.map { SystemAudioCapture(writer: $0) }
     do {
-        try engine.start()
+        try mic.start()
         try system?.start()
     } catch {
         fail("\(error)")
@@ -313,8 +458,7 @@ func runRecord(outputDir: URL, micOnly: Bool) -> Never {
     let stop = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
     stop.setEventHandler {
         levels.cancel()
-        input.removeTap(onBus: 0)
-        engine.stop()
+        mic.stop()
         system?.stop()
         micWriter.close()
         systemWriter?.close()
@@ -323,6 +467,50 @@ func runRecord(outputDir: URL, micOnly: Bool) -> Never {
     }
     stop.resume()
     dispatchMain()
+}
+
+// ---------- cancel-echo ----------
+
+// Après un appel : retire du micro le son du Mac qu'il a capté (la voix des autres sortie par les haut-parleurs).
+// Les deux pistes sont calées sur la même horloge, le son du Mac sert de référence à l'annulation d'écho de WebRTC
+func runCancelEcho(mic: URL, reference: URL, output: URL) -> Never {
+    do {
+        let micFile = try AVAudioFile(forReading: mic)
+        let referenceFile = try AVAudioFile(forReading: reference)
+        let format = micFile.processingFormat
+        guard format.channelCount == 1, referenceFile.processingFormat == format else {
+            fail("Les deux pistes doivent avoir le même format mono")
+        }
+        let outputFile = try AVAudioFile(forWriting: output, settings: micFile.fileFormat.settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+
+        guard let canceller = echo_canceller_create(Int32(format.sampleRate)) else { fail("Annulation d'écho indisponible") }
+        defer { echo_canceller_destroy(canceller) }
+        let blockSize = AVAudioFrameCount(echo_canceller_block_size(canceller))
+        let micBlock = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: blockSize)!
+        let referenceBlock = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: blockSize)!
+
+        // Le dernier bloc, incomplet, est complété par du silence le temps du traitement
+        func read(_ file: AVAudioFile, into block: AVAudioPCMBuffer) throws -> AVAudioFrameCount {
+            block.frameLength = 0
+            if file.framePosition < file.length { try file.read(into: block, frameCount: blockSize) }
+            let count = block.frameLength
+            memset(block.floatChannelData![0] + Int(count), 0, Int(blockSize - count) * MemoryLayout<Float>.size)
+            block.frameLength = blockSize
+            return count
+        }
+
+        while micFile.framePosition < micFile.length {
+            let count = try read(micFile, into: micBlock)
+            _ = try read(referenceFile, into: referenceBlock)
+            let status = echo_canceller_process(canceller, referenceBlock.floatChannelData![0], micBlock.floatChannelData![0])
+            if status != 0 { fail("Échec de l'annulation d'écho (\(status))") }
+            micBlock.frameLength = count
+            try outputFile.write(from: micBlock)
+        }
+    } catch {
+        fail("Annulation d'écho : \(error)")
+    }
+    exit(0)
 }
 
 // ---------- hotkey ----------
@@ -408,10 +596,18 @@ case "detect":
 case "record":
     guard let index = arguments.firstIndex(of: "--out"), index + 1 < arguments.count else { fail("usage : record --out <dossier>") }
     runRecord(outputDir: URL(fileURLWithPath: arguments[index + 1]), micOnly: arguments.contains("--mic-only"))
+case "cancel-echo":
+    func option(_ name: String) -> URL {
+        guard let index = arguments.firstIndex(of: name), index + 1 < arguments.count else {
+            fail("usage : cancel-echo --mic <wav> --reference <wav> --out <wav>")
+        }
+        return URL(fileURLWithPath: arguments[index + 1])
+    }
+    runCancelEcho(mic: option("--mic"), reference: option("--reference"), output: option("--out"))
 case "hotkey":
     runHotkey()
 case "paste":
     runPaste()
 default:
-    fail("usage : steno-recorder detect | record --out <dossier> [--mic-only] | hotkey | paste")
+    fail("usage : steno-recorder detect | record --out <dossier> [--mic-only] | cancel-echo --mic <wav> --reference <wav> --out <wav> | hotkey | paste")
 }
