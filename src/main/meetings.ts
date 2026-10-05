@@ -4,7 +4,7 @@ import path from "path";
 import readline from "readline";
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from "child_process";
 import { transcribe, transcriptionCost, type AzurePhrase, type TranscriptionResult } from "./gateway-transcription";
-import { helperCommand } from "./native-helper";
+import { RECORDER, helperCommand } from "./native-helper";
 import type { Call } from "./call-detector";
 import type { RecordingIndicator } from "./recording-indicator";
 import type { Meeting, MeetingDetails, MeetingSummary, TimedWord, Utterance } from "../shared/types";
@@ -28,9 +28,14 @@ function run(command: string, args: string[]): Promise<string> {
 
 const ffmpeg = (args: string[]) => run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...args]);
 
-// Compresse les deux pistes, et les mixe en un seul fichier pour l'écoute
+// Compresse les deux pistes, et les mixe en un seul fichier pour l'écoute.
+// Avant, la voix des autres captée par le micro (appel sur les haut-parleurs) en est retirée, avec le son du Mac comme référence
 async function encodeAudio(dir: string) {
     const file = (name: string) => path.join(dir, name);
+    await run(RECORDER, ["cancel-echo", "--mic", file("mic.wav"), "--reference", file("system.wav"), "--out", file("mic-clean.wav")]);
+    // Micro avant annulation d'écho, gardé le temps de vérifier le résultat sur de vrais appels
+    await ffmpeg(["-i", file("mic.wav"), ...OPUS, file("mic-raw.ogg")]);
+    fs.renameSync(file("mic-clean.wav"), file("mic.wav"));
     await ffmpeg(["-i", file("mic.wav"), ...OPUS, file("mic.ogg")]);
     await ffmpeg(["-i", file("system.wav"), ...OPUS, file("system.ogg")]);
     await ffmpeg([
