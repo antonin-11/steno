@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { execFile } from "child_process";
-import { app, globalShortcut, clipboard, BrowserWindow, ipcMain, screen } from "electron";
+import { app, globalShortcut, clipboard, ClipboardItem, BrowserWindow, ipcMain, screen } from "electron";
 import dotenv from "dotenv";
 import OpenAI from "openai";
 import { watchVoiceMemos, getMemoText, type Memo } from "./voice-memos";
@@ -386,18 +386,38 @@ function pasteAtCursor(): Promise<void> {
     });
 }
 
+// Formats du presse-papiers remis après un collage : texte, mise en forme et image
+const SAVED_CLIPBOARD_TYPES = ["text/plain", "text/html", "text/rtf", "image/png"];
+
+// Copie du presse-papiers dans ces formats. Les éléments lus suivent le presse-papiers en direct :
+// leur contenu doit être copié avant d'écrire autre chose. Le texte est gardé en chaîne, l'image en Blob
+async function saveClipboard() {
+    const items = await clipboard.read();
+    return Promise.all(
+        items.map(async (item) => {
+            const types = item.types.filter((type) => SAVED_CLIPBOARD_TYPES.includes(type));
+            const entries = await Promise.all(
+                types.map(async (type) => {
+                    const blob = (await item.getType(type)) as Blob;
+                    return [type, type.startsWith("text/") ? await blob.text() : blob] as const;
+                })
+            );
+            return Object.fromEntries(entries);
+        })
+    );
+}
+
 // Colle un texte sans toucher au presse-papiers : son contenu est remis juste après le collage.
 // onPasted est appelé dès que Cmd+V est envoyé, avant l'attente de remise du presse-papiers
 async function pasteText(text: string, onPasted?: () => void) {
-    const saved = { text: clipboard.readText(), html: clipboard.readHTML(), rtf: clipboard.readRTF(), image: clipboard.readImage() };
-    clipboard.writeText(text);
+    const saved = (await saveClipboard()).filter((item) => Object.keys(item).length > 0);
+    await clipboard.writeText(text);
     try {
         await pasteAtCursor();
         onPasted?.();
         await wait(CLIPBOARD_RESTORE_DELAY_MS);
     } finally {
-        const restored = Object.fromEntries(Object.entries(saved).filter(([, value]) => (typeof value === "string" ? value : !value.isEmpty())));
-        if (Object.keys(restored).length > 0) clipboard.write(restored);
+        if (saved.length > 0) await clipboard.write(saved.map((item) => new ClipboardItem(item)));
         else clipboard.clear();
     }
 }
@@ -463,7 +483,7 @@ ipcMain.handle("set-correction-instructions", (_event, instructions) => updateSe
 app.whenReady().then(() => {
     // Lancée avec `electron .`, l'app afficherait l'icône d'Electron dans le Dock (Sténo.app a la sienne)
     if (process.platform === "darwin" && !app.isPackaged) {
-        app.dock.setIcon(path.join(app.getAppPath(), "brand", "icon", "png", "steno-icon-1024.png"));
+        app.dock?.setIcon(path.join(app.getAppPath(), "brand", "icon", "png", "steno-icon-1024.png"));
     }
 
     createOverlay();
@@ -536,7 +556,7 @@ app.whenReady().then(() => {
         // Ignore le raccourci si une correction est déjà en cours
         if (busy) return;
 
-        const clipboardText = clipboard.readText();
+        const clipboardText = await clipboard.readText();
         if (!clipboardText.trim()) return;
 
         busy = true;
@@ -545,7 +565,7 @@ app.whenReady().then(() => {
 
         try {
             const correction = await correctText(clipboardText);
-            clipboard.writeText(correction.text);
+            await clipboard.writeText(correction.text);
 
             if (process.platform === "darwin") {
                 await pasteAtCursor();
