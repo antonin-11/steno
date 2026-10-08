@@ -1,7 +1,10 @@
 // Helper natif de Sténo pour les appels :
-//   detect             écrit (en JSON, sur stdout) les apps qui utilisent le micro ou la sortie audio
+//   detect             écrit (en JSON, sur stdout) les apps qui utilisent le micro ou la sortie audio,
+//                      et si elles ont une connexion WebRTC établie (appel en cours)
 //   record --out <dir> enregistre le micro (mic.wav) et tout le son du Mac (system.wav), calés sur la même horloge
 //                      avec --mic-only, seulement le micro (dictée)
+//                      avec --standby, prépare le micro sans l'ouvrir et le démarre à la première ligne lue sur stdin :
+//                      « start », ou « start stream » pour recevoir aussi le son du micro au fil de l'eau (mode rapide)
 //   cancel-echo --mic <wav> --reference <wav> --out <wav>
 //                      retire du micro le son du Mac qu'il a capté (annulation d'écho de WebRTC)
 //   hotkey             écrit le début (Option droite + Cmd droite enfoncées) et la fin (l'une relâchée) de la dictée
@@ -15,6 +18,7 @@ import ApplicationServices
 import AVFoundation
 import CoreAudio
 import Foundation
+import IOKit.pwr_mgt
 
 // Les fichiers sont écrits en 16 kHz mono : suffisant pour la voix, ffmpeg les compresse ensuite
 let sampleRate = 16_000.0
@@ -85,6 +89,20 @@ func appBundleId(pid: pid_t, fallback: String?) -> String? {
     return bundleId
 }
 
+// Chromium (donc Slack) empêche la mise en veille tant qu'une connexion WebRTC est établie, c'est-à-dire pendant un appel.
+// L'assertion est posée par le processus principal de l'app, pas par celui qui tient le micro
+func webRTCApps() -> Set<String> {
+    var assertions: Unmanaged<CFDictionary>?
+    guard IOPMCopyAssertionsByProcess(&assertions) == kIOReturnSuccess,
+          let byPid = assertions?.takeRetainedValue() as? [NSNumber: [[String: Any]]] else { return [] }
+
+    var apps = Set<String>()
+    for (pid, list) in byPid where list.contains(where: { $0[kIOPMAssertionNameKey] as? String == "WebRTC has active PeerConnections" }) {
+        if let bundleId = appBundleId(pid: pid.int32Value, fallback: nil) { apps.insert(bundleId) }
+    }
+    return apps
+}
+
 func audioApps() -> [[String: Any]] {
     var apps: [String: (input: Bool, output: Bool)] = [:]
 
@@ -100,7 +118,9 @@ func audioApps() -> [[String: Any]] {
         apps[bundleId] = (previous.input || input, previous.output || output)
     }
 
-    return apps.keys.sorted().map { ["bundleId": $0, "input": apps[$0]!.input, "output": apps[$0]!.output] }
+    // Sans app sur le micro, pas d'appel possible : inutile de lire les assertions
+    let webRTC = apps.values.contains { $0.input } ? webRTCApps() : []
+    return apps.keys.sorted().map { ["bundleId": $0, "input": apps[$0]!.input, "output": apps[$0]!.output, "webrtc": webRTC.contains($0)] }
 }
 
 func runDetect() -> Never {
@@ -135,7 +155,8 @@ func log(_ message: String) {
 final class TrackWriter {
     private let file: AVAudioFile
     private let name: String
-    private let startHostTime: UInt64
+    // En veille (--standby), remise à l'heure du démarrage du micro, avant le premier bloc
+    var startHostTime: UInt64
     private let outputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false)!
     private var converter: AVAudioConverter?
     private var framesWritten: AVAudioFramePosition = 0
@@ -182,16 +203,7 @@ final class TrackWriter {
                   frameCapacity: AVAudioFrameCount(Double(buffer.frameLength) * sampleRate / buffer.format.sampleRate) + 32
               ) else { return }
 
-        var provided = false
-        _ = converter.convert(to: output, error: nil) { _, status in
-            if provided {
-                status.pointee = .noDataNow
-                return nil
-            }
-            provided = true
-            status.pointee = .haveData
-            return buffer
-        }
+        convert(buffer, with: converter, to: output)
         guard output.frameLength > 0 else { return }
 
         // Début plus tardif que l'autre piste, ou blocs perdus : on comble avec du silence pour rester à l'heure
@@ -230,6 +242,11 @@ final class TrackWriter {
         file.close()
     }
 
+    // Durée écrite, silence compris. Lue une fois la source arrêtée
+    var seconds: Double {
+        Double(framesWritten) / sampleRate
+    }
+
     // Niveau entre 0 et 1 depuis le dernier appel (échelle de -50 dB à 0 dB)
     func takeLevel() -> Double {
         levelLock.lock()
@@ -238,6 +255,57 @@ final class TrackWriter {
         levelLock.unlock()
         guard rms > 0 else { return 0 }
         return min(1, max(0, (20 * log10(Double(rms)) + 50) / 50))
+    }
+}
+
+// Copie des premières images d'un bloc : le bloc livré par le moteur audio lui appartient, on ne le modifie pas
+func prefix(of buffer: AVAudioPCMBuffer, frames: AVAudioFrameCount) -> AVAudioPCMBuffer? {
+    guard let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: frames) else { return nil }
+    copy.frameLength = frames
+    let bytes = Int(frames) * Int(buffer.format.streamDescription.pointee.mBytesPerFrame)
+    for (source, destination) in zip(UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList), UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)) {
+        guard let from = source.mData, let to = destination.mData else { return nil }
+        memcpy(to, from, bytes)
+    }
+    return copy
+}
+
+// Convertit un bloc entier d'un coup : le convertisseur réclame ses données par un callback
+func convert(_ buffer: AVAudioPCMBuffer, with converter: AVAudioConverter, to output: AVAudioPCMBuffer) {
+    var provided = false
+    _ = converter.convert(to: output, error: nil) { _, status in
+        if provided {
+            status.pointee = .noDataNow
+            return nil
+        }
+        provided = true
+        status.pointee = .haveData
+        return buffer
+    }
+}
+
+// Mode rapide de la dictée : le son du micro part vers l'app pendant l'enregistrement, en PCM 16 bits 24 kHz mono
+// (format attendu par la transcription en direct), encodé en base64 dans des événements "audio"
+final class AudioStreamer {
+    private let outputFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24_000, channels: 1, interleaved: true)!
+    private var converter: AVAudioConverter?
+
+    // Appelé sur le fil audio ; l'écriture sur stdout passe par la file principale, comme les autres événements
+    func send(_ buffer: AVAudioPCMBuffer) {
+        if converter == nil || converter!.inputFormat != buffer.format {
+            converter = AVAudioConverter(from: buffer.format, to: outputFormat)
+            converter?.channelMap = [0]
+        }
+        guard let converter,
+              let output = AVAudioPCMBuffer(
+                  pcmFormat: outputFormat,
+                  frameCapacity: AVAudioFrameCount(Double(buffer.frameLength) * outputFormat.sampleRate / buffer.format.sampleRate) + 32
+              ) else { return }
+
+        convert(buffer, with: converter, to: output)
+        guard output.frameLength > 0 else { return }
+        let pcm = Data(bytes: output.int16ChannelData![0], count: Int(output.frameLength) * MemoryLayout<Int16>.size).base64EncodedString()
+        DispatchQueue.main.async { emit(["type": "audio", "pcm": pcm]) }
     }
 }
 
@@ -322,20 +390,66 @@ final class MicrophoneCapture {
     private let restartDelay = 0.75
 
     private let writer: TrackWriter
+    // Envoi du son en direct (mode rapide), posé avant le démarrage
+    var streamer: AudioStreamer?
+    // Appelé sur la file principale une fois le son écrit et envoyé jusqu'à l'instant de l'arrêt demandé
+    var onStopReached: (() -> Void)?
     private var engine: AVAudioEngine?
     private var configurationObserver: NSObjectProtocol?
     private var watchdog: DispatchSourceTimer?
     private var pendingRestart: DispatchWorkItem?
     private let aliveLock = NSLock()
+    // Arrêt demandé : seul le son capté avant cet instant est gardé
+    private let stopLock = NSLock()
+    private var stopHostTime: UInt64?
+    private var stopReached = false
     private var lastBufferAt = Date()
+    private var running = false
+    // Micro et sortie par défaut à la création du moteur : AVAudioEngine les réunit dans un même périphérique
+    private var engineDevices: [UInt32?] = []
 
     init(writer: TrackWriter) {
         self.writer = writer
     }
 
+    // Crée le moteur sans ouvrir le micro (0,1 s) : le démarrage ne prend ensuite qu'une dizaine de millisecondes
+    func prepare() throws {
+        stopEngine()
+        let engine = AVAudioEngine()
+        let input = engine.inputNode
+        input.installTap(onBus: 0, bufferSize: 4096, format: input.outputFormat(forBus: 0)) { [weak self, writer] buffer, when in
+            guard let self else { return }
+            self.markAlive()
+            let (kept, reachedStop) = self.trimmedAtStop(buffer, startingAt: when)
+            if let kept {
+                writer.write(kept, at: when.isHostTimeValid ? when.hostTime : nil)
+                self.streamer?.send(kept)
+            }
+            // Après l'envoi du dernier morceau, qui passe lui aussi par la file principale : il part avant l'arrêt
+            if reachedStop { DispatchQueue.main.async { self.onStopReached?() } }
+        }
+        configurationObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+            self?.scheduleRestart("changement de configuration audio")
+        }
+        self.engine = engine
+        engineDevices = defaultDevices()
+        engine.prepare()
+    }
+
     // Appelé sur la file principale, comme tout le reste de la classe
     func start() throws {
-        try startEngine()
+        // Micro ou sortie par défaut changés depuis la préparation (AirPods connectés…) : le moteur est refait
+        if engine == nil || defaultDevices() != engineDevices { try prepare() }
+        running = true
+        markAlive()
+        do {
+            try engine?.start()
+        } catch {
+            // Moteur préparé avant une mise en veille, ou périphérique disparu entre-temps : on le refait une fois
+            log("micro : démarrage impossible (\(error)), nouvel essai")
+            try prepare()
+            try engine?.start()
+        }
         let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now() + 1, repeating: 1)
         timer.setEventHandler { [weak self] in self?.checkAlive() }
@@ -344,24 +458,10 @@ final class MicrophoneCapture {
     }
 
     func stop() {
+        running = false
         watchdog?.cancel()
         pendingRestart?.cancel()
         stopEngine()
-    }
-
-    private func startEngine() throws {
-        let engine = AVAudioEngine()
-        let input = engine.inputNode
-        input.installTap(onBus: 0, bufferSize: 4096, format: input.outputFormat(forBus: 0)) { [weak self, writer] buffer, when in
-            self?.markAlive()
-            writer.write(buffer, at: when.isHostTimeValid ? when.hostTime : nil)
-        }
-        configurationObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
-            self?.scheduleRestart("changement de configuration audio")
-        }
-        self.engine = engine
-        markAlive()
-        try engine.start()
     }
 
     private func stopEngine() {
@@ -370,6 +470,29 @@ final class MicrophoneCapture {
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
         engine = nil
+    }
+
+    // Le micro livre son son par blocs de 0,1 s : à l'arrêt, on attend le bloc qui contient l'instant demandé
+    // et on le coupe à cet instant, au lieu de perdre ce bloc ou d'enregistrer au-delà
+    func requestStop(at hostTime: UInt64) {
+        stopLock.lock()
+        stopHostTime = hostTime
+        stopLock.unlock()
+    }
+
+    // Bloc coupé à l'instant de l'arrêt (nil s'il commence après), et s'il est le premier à l'atteindre
+    private func trimmedAtStop(_ buffer: AVAudioPCMBuffer, startingAt time: AVAudioTime) -> (AVAudioPCMBuffer?, Bool) {
+        stopLock.lock()
+        defer { stopLock.unlock() }
+        guard let stopHostTime, time.isHostTimeValid else { return (buffer, false) }
+        if stopReached { return (nil, false) }
+        let framesBeforeStop = (AVAudioTime.seconds(forHostTime: stopHostTime) - AVAudioTime.seconds(forHostTime: time.hostTime)) * buffer.format.sampleRate
+        guard framesBeforeStop < Double(buffer.frameLength) else { return (buffer, false) }
+        stopReached = true
+        // Moins d'1 ms avant l'arrêt : rien à garder
+        let framesToKeep = AVAudioFrameCount(max(0, framesBeforeStop))
+        guard framesToKeep >= AVAudioFrameCount(buffer.format.sampleRate / 1000) else { return (nil, true) }
+        return (prefix(of: buffer, frames: framesToKeep), true)
     }
 
     private func markAlive() {
@@ -392,10 +515,14 @@ final class MicrophoneCapture {
         let restart = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.pendingRestart = nil
-            log("micro : \(reason), relance")
-            self.stopEngine()
+            // En veille, le moteur est refait sans ouvrir le micro
+            if self.running { log("micro : \(reason), relance") }
             do {
-                try self.startEngine()
+                try self.prepare()
+                if self.running {
+                    self.markAlive()
+                    try self.engine?.start()
+                }
             } catch {
                 // Le micro n'est peut-être pas encore disponible : la surveillance réessaiera dans quelques secondes
                 log("micro : relance impossible (\(error))")
@@ -404,6 +531,12 @@ final class MicrophoneCapture {
         pendingRestart = restart
         DispatchQueue.main.asyncAfter(deadline: .now() + restartDelay, execute: restart)
     }
+}
+
+// Micro et sortie par défaut du Mac
+func defaultDevices() -> [UInt32?] {
+    let system = AudioObjectID(kAudioObjectSystemObject)
+    return [uint32Property(system, kAudioHardwarePropertyDefaultInputDevice), uint32Property(system, kAudioHardwarePropertyDefaultOutputDevice)]
 }
 
 struct RecorderError: Error, CustomStringConvertible {
@@ -415,7 +548,50 @@ func check(_ status: OSStatus, _ step: String) throws {
     if status != noErr { throw RecorderError("échec : \(step) (\(status))") }
 }
 
-func runRecord(outputDir: URL, micOnly: Bool) -> Never {
+// Attente maximale du bloc de son qui contient l'instant de l'arrêt (il arrive normalement en moins de 0,1 s)
+let maxStopWaitSeconds = 0.3
+// Au-delà, l'arrêt est considéré comme bloqué
+let maxStopSeconds = 2.0
+
+func runRecord(outputDir: URL, micOnly: Bool, standby: Bool) -> Never {
+    var micWriter: TrackWriter?
+    var systemWriter: TrackWriter?
+    var mic: MicrophoneCapture?
+    var system: SystemAudioCapture?
+    var levels: DispatchSourceTimer?
+
+    // Arrêt propre sur SIGTERM, dès le lancement : une dictée relâchée avant le démarrage du micro
+    // donne un WAV vide mais lisible, au lieu d'un processus tué sans fichier
+    signal(SIGTERM, SIG_IGN)
+    let stop = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    var stopping = false
+    stop.setEventHandler {
+        guard !stopping else { return }
+        stopping = true
+        // Filet de sécurité : un arrêt bloqué ne doit jamais laisser le micro ouvert
+        DispatchQueue.global().asyncAfter(deadline: .now() + maxStopSeconds) {
+            log("arrêt bloqué depuis \(Int(maxStopSeconds)) s, sortie forcée")
+            _exit(1)
+        }
+        func finish() {
+            levels?.cancel()
+            mic?.stop()
+            system?.stop()
+            micWriter?.close()
+            systemWriter?.close()
+            emit(["type": "stopped", "seconds": micWriter?.seconds ?? 0])
+            exit(0)
+        }
+        // Sans enregistrement en cours, arrêt immédiat. Sinon, le son est gardé jusqu'à l'instant de la demande, pas au-delà :
+        // arrêter le moteur tout de suite perdrait le dernier bloc pas encore livré, donc la fin du dernier mot
+        guard levels != nil, let capture = mic else { return finish() }
+        capture.onStopReached = { finish() }
+        capture.requestStop(at: mach_absolute_time())
+        // Si le bloc n'arrive pas (micro arrêté par macOS…), on n'attend pas indéfiniment
+        DispatchQueue.main.asyncAfter(deadline: .now() + maxStopWaitSeconds) { finish() }
+    }
+    stop.resume()
+
     let permission = DispatchSemaphore(value: 0)
     var micAllowed = false
     AVCaptureDevice.requestAccess(for: .audio) { granted in
@@ -425,47 +601,74 @@ func runRecord(outputDir: URL, micOnly: Bool) -> Never {
     permission.wait()
     if !micAllowed { fail("Accès au micro refusé") }
 
-    // Origine commune des deux pistes : chacune commence au lancement de l'enregistrement
-    let startHostTime = mach_absolute_time()
-    let micWriter: TrackWriter
-    let systemWriter: TrackWriter?
+    // Les fichiers puis le moteur passent par le registre des composants audio de macOS, qui s'arrête après
+    // quelques minutes sans audio : le relancer prend 2 à 3,5 s. En veille, c'est payé avant l'appui
     do {
+        let startHostTime = mach_absolute_time()
         micWriter = try TrackWriter(url: outputDir.appendingPathComponent("mic.wav"), name: "micro", startHostTime: startHostTime)
         systemWriter = micOnly ? nil : try TrackWriter(url: outputDir.appendingPathComponent("system.wav"), name: "son du Mac", startHostTime: startHostTime)
     } catch {
         fail("Impossible de créer les fichiers audio : \(error)")
     }
 
-    let mic = MicrophoneCapture(writer: micWriter)
-    let system = systemWriter.map { SystemAudioCapture(writer: $0) }
+    let capture = MicrophoneCapture(writer: micWriter!)
+    mic = capture
     do {
-        try mic.start()
-        try system?.start()
+        try capture.prepare()
     } catch {
         fail("\(error)")
     }
-    emit(["type": "started"])
 
-    let levels = DispatchSource.makeTimerSource(queue: .main)
-    levels.schedule(deadline: .now(), repeating: 0.1)
-    levels.setEventHandler {
-        emit(["type": "level", "mic": micWriter.takeLevel(), "system": systemWriter?.takeLevel() ?? 0])
-    }
-    levels.resume()
+    func begin(stream: Bool) {
+        if stream { capture.streamer = AudioStreamer() }
+        // Origine commune des deux pistes : chacune commence au démarrage du micro
+        let startHostTime = mach_absolute_time()
+        micWriter?.startHostTime = startHostTime
+        systemWriter?.startHostTime = startHostTime
+        system = systemWriter.map { SystemAudioCapture(writer: $0) }
+        do {
+            try capture.start()
+            try system?.start()
+        } catch {
+            fail("\(error)")
+        }
+        emit(["type": "started"])
 
-    // Arrêt propre sur SIGTERM : on coupe les deux sources avant de finaliser les WAV
-    signal(SIGTERM, SIG_IGN)
-    let stop = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-    stop.setEventHandler {
-        levels.cancel()
-        mic.stop()
-        system?.stop()
-        micWriter.close()
-        systemWriter?.close()
-        emit(["type": "stopped"])
-        exit(0)
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now(), repeating: 0.1)
+        timer.setEventHandler {
+            emit(["type": "level", "mic": micWriter?.takeLevel() ?? 0, "system": systemWriter?.takeLevel() ?? 0])
+        }
+        timer.resume()
+        levels = timer
+
+        // L'app a disparu sans demander l'arrêt (plantage) : on s'arrête aussi, plutôt que de garder le micro ouvert
+        let appGone = DispatchSource.makeReadSource(fileDescriptor: STDIN_FILENO, queue: .main)
+        appGone.setEventHandler {
+            var byte: UInt8 = 0
+            guard read(STDIN_FILENO, &byte, 1) <= 0 else { return }
+            appGone.cancel()
+            raise(SIGTERM)
+        }
+        appGone.resume()
     }
-    stop.resume()
+
+    guard standby else {
+        begin(stream: false)
+        dispatchMain()
+    }
+
+    // En veille : le micro s'ouvre dès que l'app écrit une ligne. Une entrée fermée veut dire que l'app est partie
+    emit(["type": "ready"])
+    let input = DispatchSource.makeReadSource(fileDescriptor: STDIN_FILENO, queue: .main)
+    input.setEventHandler {
+        input.cancel()
+        var line = [UInt8](repeating: 0, count: 64)
+        let count = read(STDIN_FILENO, &line, line.count)
+        if count <= 0 { exit(0) }
+        begin(stream: String(decoding: line[..<count], as: UTF8.self).contains("stream"))
+    }
+    input.resume()
     dispatchMain()
 }
 
@@ -595,7 +798,7 @@ case "detect":
     runDetect()
 case "record":
     guard let index = arguments.firstIndex(of: "--out"), index + 1 < arguments.count else { fail("usage : record --out <dossier>") }
-    runRecord(outputDir: URL(fileURLWithPath: arguments[index + 1]), micOnly: arguments.contains("--mic-only"))
+    runRecord(outputDir: URL(fileURLWithPath: arguments[index + 1]), micOnly: arguments.contains("--mic-only"), standby: arguments.contains("--standby"))
 case "cancel-echo":
     func option(_ name: String) -> URL {
         guard let index = arguments.firstIndex(of: name), index + 1 < arguments.count else {
@@ -609,5 +812,5 @@ case "hotkey":
 case "paste":
     runPaste()
 default:
-    fail("usage : steno-recorder detect | record --out <dossier> [--mic-only] | cancel-echo --mic <wav> --reference <wav> --out <wav> | hotkey | paste")
+    fail("usage : steno-recorder detect | record --out <dossier> [--mic-only] [--standby] | cancel-echo --mic <wav> --reference <wav> --out <wav> | hotkey | paste")
 }

@@ -22,7 +22,8 @@ export type TranscriptionResult = {
     };
 };
 
-export async function transcribe(file: string, model: string, azureOptions: Record<string, unknown>): Promise<TranscriptionResult> {
+// `signal` : annulation par la croix de la pastille (dictée)
+export async function transcribe(file: string, model: string, azureOptions: Record<string, unknown>, signal?: AbortSignal): Promise<TranscriptionResult> {
     const response = await fetch(TRANSCRIPTION_URL, {
         method: "POST",
         headers: {
@@ -37,7 +38,7 @@ export async function transcribe(file: string, model: string, azureOptions: Reco
             mediaType: MEDIA_TYPES[path.extname(file)],
             providerOptions: { azure: azureOptions },
         }),
-        signal: AbortSignal.timeout(TRANSCRIPTION_TIMEOUT_MS),
+        signal: AbortSignal.any([AbortSignal.timeout(TRANSCRIPTION_TIMEOUT_MS), ...(signal ? [signal] : [])]),
     });
 
     if (!response.ok) {

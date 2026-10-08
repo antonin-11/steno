@@ -11,6 +11,19 @@ function memoTitle(entry: HistoryEntry) {
     return isDefaultTitle ? formatMemoDate(new Date(entry.date)) : entry.memoTitle;
 }
 
+// Dictée faite en mode rapide, ou repassée en transcription normale après un échec du mode rapide
+function FastModeBadge({ mode }: { mode: "ok" | "fallback" }) {
+    return mode === "ok" ? (
+        <span title="Transcrite en mode rapide" className="flex-none rounded-full bg-terracotta/10 px-2 py-px text-[11.5px] font-medium text-terracotta">
+            Rapide
+        </span>
+    ) : (
+        <span title="Le mode rapide a échoué : transcription normale" className="flex-none rounded-full bg-black/5 px-2 py-px text-[11.5px] font-medium text-muted">
+            Repli
+        </span>
+    );
+}
+
 function HistoryRow({ entry }: { entry: HistoryEntry }) {
     const isVoice = entry.source === "voice";
     return (
@@ -21,6 +34,7 @@ function HistoryRow({ entry }: { entry: HistoryEntry }) {
                 {isVoice && <span className="mb-0.5 block text-[12.5px] text-muted">{`${memoTitle(entry)} · ${formatLength(entry.memoDuration ?? 0)}`}</span>}
                 {entry.corrected || "(aucune parole détectée)"}
             </div>
+            {entry.fastMode && <FastModeBadge mode={entry.fastMode} />}
             {/* Le coût reste enregistré mais n'est plus affiché. Pour un vocal, le temps de traitement
                 n'apporte rien non plus : sa durée est déjà dans le titre */}
             {!isVoice && <div className="w-11 flex-none text-right text-[13px] text-muted tabular-nums">{formatDuration(entry.durationMs ?? 0)}</div>}

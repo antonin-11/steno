@@ -15,8 +15,11 @@
         "release": "sh scripts/release.sh"
     },
     "dependencies": {
+        "@ai-sdk/gateway": "^4.0.106",
+        "ai": "^7.0.130",
         "dotenv": "^16.4.7",
-        "openai": "^4.77.0"
+        "openai": "^4.77.0",
+        "zod": "3.25.76"
     },
     "devDependencies": {
         "@electron-toolkit/tsconfig": "^2.0.0",

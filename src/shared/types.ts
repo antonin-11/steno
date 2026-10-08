@@ -15,7 +15,8 @@ export type HistoryEntry = {
     inputTokens?: number;
     outputTokens?: number;
     cost: number | null;
-    costStatus: "pending" | "exact" | "unavailable" | "none";
+    // "estimated" : mode rapide de la dictée, dont le Gateway ne renvoie pas le coût
+    costStatus: "pending" | "exact" | "estimated" | "unavailable" | "none";
     provider?: string;
     // Mémos vocaux
     memoTitle?: string | null;
@@ -23,6 +24,8 @@ export type HistoryEntry = {
     transcriptSource?: "apple" | "api";
     // Dictées
     audioDurationSec?: number;
+    // Mode rapide : "ok" si le texte vient de la transcription en direct, "fallback" si la transcription normale a pris le relais
+    fastMode?: "ok" | "fallback";
 };
 
 // Accès aux mémos de Dictaphone : null tant que la première lecture n'a pas eu lieu
