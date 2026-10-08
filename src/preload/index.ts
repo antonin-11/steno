@@ -37,6 +37,8 @@ const steno = {
     onMeetingsUpdated: (callback: (meetings: MeetingSummary[]) => void) => subscribe("meetings-updated", callback),
     getDictationLanguage: (): Promise<string> => ipcRenderer.invoke("get-dictation-language"),
     setDictationLanguage: (language: string): Promise<void> => ipcRenderer.invoke("set-dictation-language", language),
+    getFastDictation: (): Promise<boolean> => ipcRenderer.invoke("get-fast-dictation"),
+    setFastDictation: (enabled: boolean): Promise<void> => ipcRenderer.invoke("set-fast-dictation", enabled),
     getCorrectionInstructions: (): Promise<string> => ipcRenderer.invoke("get-correction-instructions"),
     setCorrectionInstructions: (instructions: string): Promise<void> => ipcRenderer.invoke("set-correction-instructions", instructions),
 
@@ -44,6 +46,8 @@ const steno = {
     onOverlayState: (callback: (state: OverlayState) => void) => subscribe("overlay-state", callback),
     // Niveau de la voix pendant la dictée, entre 0 et 1
     onOverlayLevel: (callback: (level: number) => void) => subscribe("overlay-level", callback),
+    // Croix affichée au survol du rond de chargement de la dictée
+    cancelOverlay: () => ipcRenderer.send("overlay-cancel"),
 
     // ---------- Pilule d'enregistrement des appels ----------
     onIndicatorState: (callback: (state: IndicatorState) => void) => subscribe("indicator-state", callback),

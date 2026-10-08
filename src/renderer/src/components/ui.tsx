@@ -7,6 +7,35 @@ export const titleClass = "text-[20px] font-[550] tracking-[-0.01em]";
 // Champ de saisie ; la taille (hauteur, marges) est ajoutée selon l'endroit
 export const fieldClass = "rounded-lg border border-border bg-card text-[13.5px] text-ink outline-none focus:border-[#c9c7c1]";
 
+// Interrupteur marche/arrêt, placé dans le <label> de son réglage
+export function Switch({ checked, onChange }: { checked: boolean; onChange: (checked: boolean) => void }) {
+    return (
+        <button
+            type="button"
+            role="switch"
+            aria-checked={checked}
+            onClick={() => onChange(!checked)}
+            className={`relative h-[18px] w-[30px] flex-none rounded-full transition-colors duration-150 ${checked ? "bg-terracotta" : "bg-[#d9d7d2]"}`}
+        >
+            <span
+                className={`absolute top-0.5 left-0.5 size-[14px] rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.2)] transition-transform duration-150 ${checked ? "translate-x-3" : ""}`}
+            />
+        </button>
+    );
+}
+
+// Petit « i » qui affiche une explication au survol
+export function InfoTip({ children }: { children: ReactNode }) {
+    return (
+        <span className="group/info relative flex">
+            <span className="flex size-4 cursor-default items-center justify-center rounded-full border border-faint text-[10px] font-semibold text-faint">i</span>
+            <span className="invisible absolute top-6 left-1/2 z-10 w-[290px] -translate-x-1/2 rounded-lg bg-ink px-3 py-2.5 text-[12.5px] leading-[1.45] text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover/info:visible group-hover/info:opacity-100">
+                {children}
+            </span>
+        </span>
+    );
+}
+
 export function Subtitle({ children }: { children: ReactNode }) {
     return <p className="-mt-[18px] mb-6 text-[13.5px] leading-[1.5] text-muted">{children}</p>;
 }

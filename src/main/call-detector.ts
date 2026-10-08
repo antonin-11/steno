@@ -7,6 +7,8 @@ import { RECORDER } from "./native-helper";
 const START_DELAY_MS = 5000;
 // L'appel est fini quand l'app n'utilise plus ni le micro ni la sortie audio pendant ce délai
 const END_DELAY_MS = 5000;
+// Ou, pour Slack, quand sa connexion WebRTC reste fermée pendant ce délai : une coupure réseau la ferme quelques secondes
+const WEBRTC_END_DELAY_MS = 30000;
 // Délai minimum entre deux lectures des onglets d'un même navigateur
 const TAB_CHECK_INTERVAL_MS = 5000;
 
@@ -15,6 +17,10 @@ const CALL_APPS: Record<string, string> = {
     "com.microsoft.teams2": "Teams",
     "com.microsoft.teams": "Teams",
 };
+
+// Slack peut ouvrir le micro hors de tout huddle et le garder des heures. Un huddle passe par une connexion WebRTC :
+// sans elle, Slack sur le micro n'est pas un appel
+const WEBRTC_APPS = new Set(["com.tinyspeck.slackmacgap"]);
 
 // Navigateurs Chromium : leurs onglets se lisent tous avec le même AppleScript
 const BROWSERS = new Set([
@@ -32,8 +38,8 @@ const MEETING_URLS = [
     { label: "Slack", pattern: /https:\/\/app\.slack\.com\// },
 ];
 
-// App qui utilise le micro (input) ou la sortie audio (output), d'après le helper
-type AudioApp = { bundleId: string; input: boolean; output: boolean };
+// App qui utilise le micro (input) ou la sortie audio (output), et qui a ou non une connexion WebRTC établie, d'après le helper
+type AudioApp = { bundleId: string; input: boolean; output: boolean; webrtc: boolean };
 
 export type Call = { bundleId: string; label: string };
 
@@ -84,7 +90,10 @@ export function watchCalls({ onCallStart, onCallEnd }: { onCallStart: (call: Cal
         for (const [bundleId, since] of micSince) {
             if (now - since < START_DELAY_MS) continue;
 
-            if (CALL_APPS[bundleId]) return { bundleId, label: CALL_APPS[bundleId] };
+            if (CALL_APPS[bundleId]) {
+                if (WEBRTC_APPS.has(bundleId) && !apps.find((app) => app.bundleId === bundleId)?.webrtc) continue;
+                return { bundleId, label: CALL_APPS[bundleId] };
+            }
 
             if (BROWSERS.has(bundleId) && now - (lastTabCheck.get(bundleId) ?? 0) >= TAB_CHECK_INTERVAL_MS) {
                 lastTabCheck.set(bundleId, now);
@@ -101,11 +110,12 @@ export function watchCalls({ onCallStart, onCallEnd }: { onCallStart: (call: Cal
         if (call) {
             const { bundleId } = call;
             const app = apps.find((a) => a.bundleId === bundleId);
-            if (app && (app.input || app.output)) {
+            const usesAudio = !!app && (app.input || app.output);
+            if (usesAudio && (app?.webrtc || !WEBRTC_APPS.has(bundleId))) {
                 quietSince = null;
             } else if (quietSince === null) {
                 quietSince = now;
-            } else if (now - quietSince >= END_DELAY_MS) {
+            } else if (now - quietSince >= (usesAudio ? WEBRTC_END_DELAY_MS : END_DELAY_MS)) {
                 console.log(`Fin d'appel détectée : ${call.label}`);
                 call = null;
                 quietSince = null;

@@ -15,17 +15,20 @@
         "release": "sh scripts/release.sh"
     },
     "dependencies": {
+        "@ai-sdk/gateway": "^4.0.106",
+        "ai": "^7.0.130",
         "dotenv": "^16.4.7",
-        "openai": "^4.77.0"
+        "openai": "^4.77.0",
+        "zod": "3.25.76"
     },
     "devDependencies": {
         "@electron-toolkit/tsconfig": "^2.0.0",
         "@tailwindcss/vite": "^4.3.3",
-        "@types/node": "^20.19.43",
+        "@types/node": "^24.19.1",
         "@types/react": "^19.3.0",
         "@types/react-dom": "^19.3.0",
         "@vitejs/plugin-react": "^5.2.0",
-        "electron": "^33.2.1",
+        "electron": "^44.6.0",
         "electron-builder": "^26.15.3",
         "electron-vite": "^5.0.0",
         "react": "^19.3.0",

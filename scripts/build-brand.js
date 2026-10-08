@@ -50,7 +50,8 @@ app.whenReady().then(async () => {
         frame: false,
         transparent: true,
         backgroundColor: "#00000000",
-        webPreferences: { offscreen: true },
+        // Rendu en 2x comme sur un écran Retina, puis réduit à la taille exacte : Electron 42+ rend en 1x par défaut
+        webPreferences: { offscreen: { deviceScaleFactor: 2 } },
     });
 
     const pngDir = path.join(BRAND, "icon", "png");

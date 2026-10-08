@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { execFile } from "child_process";
-import { app, globalShortcut, clipboard, BrowserWindow, ipcMain, screen } from "electron";
+import { app, globalShortcut, clipboard, ClipboardItem, BrowserWindow, ipcMain, screen } from "electron";
 import dotenv from "dotenv";
 import OpenAI from "openai";
 import { watchVoiceMemos, getMemoText, type Memo } from "./voice-memos";
@@ -29,18 +29,20 @@ if (app.isPackaged) {
     process.env.PATH = `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`;
 }
 
-const model = "deepseek/deepseek-v4-flash";
+const model = "deepseek/deepseek-v4.1-flash";
 // Modèle utilisé pour les mémos vocaux sans transcription Apple
 const transcriptionModel = "openai/gpt-4o-mini-transcribe";
 // Modèle utilisé pour les appels enregistrés (avec séparation des interlocuteurs)
 const meetingTranscriptionModel = "microsoft/mai-transcribe-2";
 // Modèle utilisé pour la dictée (Option droite + Cmd droite maintenues)
 const dictationModel = "microsoft/mai-transcribe-2";
+// Modèle du mode rapide de la dictée : transcription en direct pendant qu'on parle
+const fastDictationModel = "microsoft/mai-transcribe-2-streaming";
 // Langue de la dictée tant qu'aucune autre n'est choisie dans la page Dictées
 const DEFAULT_DICTATION_LANGUAGE = "fr";
 
 // Fournisseur le plus rapide mesuré sur le Gateway pour ce modèle (les autres restent en secours)
-const provider = "baseten";
+const provider = "togetherai";
 
 // Vercel AI Gateway expose une API compatible OpenAI
 const GATEWAY_URL = "https://ai-gateway.vercel.sh/v1";
@@ -94,6 +96,8 @@ const COST_LOOKUP_DELAY_MS = 2000;
 let overlay: BrowserWindow;
 let mainWindow: BrowserWindow | null = null;
 let hideTimer: NodeJS.Timeout | undefined;
+// Dernier état envoyé à la pastille
+let overlayState: OverlayState = "hidden";
 let busy = false;
 let quitting = false;
 let voiceStatus: VoiceStatus = { available: null };
@@ -159,8 +163,8 @@ function removeWord(word: string) {
     return saveDictionary(readDictionary().filter((w) => w !== word));
 }
 
-// Réglages de l'app (langue de la dictée, mode de l'indicateur d'enregistrement, instructions de correction)
-type Settings = { dictationLanguage?: string; indicator?: "pill" | "tray"; correctionInstructions?: string };
+// Réglages de l'app (langue et mode rapide de la dictée, mode de l'indicateur d'enregistrement, instructions de correction)
+type Settings = { dictationLanguage?: string; fastDictation?: boolean; indicator?: "pill" | "tray"; correctionInstructions?: string };
 
 function settingsPath() {
     return path.join(app.getPath("userData"), "settings.json");
@@ -311,6 +315,8 @@ function createOverlay() {
         skipTaskbar: true,
         hasShadow: false,
         show: false,
+        // La croix d'annulation doit marcher au premier clic, sans activer la fenêtre d'abord
+        acceptFirstMouse: true,
         webPreferences: { preload: PRELOAD },
         // Sur macOS, seul un panneau (NSPanel) peut s'afficher par-dessus une app en plein écran
         // quand l'app a une icône dans le Dock
@@ -356,6 +362,10 @@ function showOverlay(state: OverlayState) {
         Math.round(workArea.y + workArea.height - OVERLAY_HEIGHT - OVERLAY_MARGIN - recordingOffset)
     );
 
+    // Le rond de la dictée (chargement juste après l'écoute) prend la souris : survolé, il laisse place à la croix d'annulation.
+    // Le reste du temps, les clics traversent la pastille
+    overlay.setIgnoreMouseEvents(!(state === "loading" && overlayState === "listening"));
+    overlayState = state;
     overlay.webContents.send("overlay-state", state);
     overlay.showInactive();
 }
@@ -367,6 +377,8 @@ function setOverlayLevel(level: number) {
 
 function hideOverlay(delay: number) {
     clearTimeout(hideTimer);
+    overlay.setIgnoreMouseEvents(true);
+    overlayState = "hidden";
     hideTimer = setTimeout(() => {
         overlay.webContents.send("overlay-state", "hidden");
         // Laisse le temps à l'animation de disparition
@@ -386,18 +398,38 @@ function pasteAtCursor(): Promise<void> {
     });
 }
 
+// Formats du presse-papiers remis après un collage : texte, mise en forme et image
+const SAVED_CLIPBOARD_TYPES = ["text/plain", "text/html", "text/rtf", "image/png"];
+
+// Copie du presse-papiers dans ces formats. Les éléments lus suivent le presse-papiers en direct :
+// leur contenu doit être copié avant d'écrire autre chose. Le texte est gardé en chaîne, l'image en Blob
+async function saveClipboard() {
+    const items = await clipboard.read();
+    return Promise.all(
+        items.map(async (item) => {
+            const types = item.types.filter((type) => SAVED_CLIPBOARD_TYPES.includes(type));
+            const entries = await Promise.all(
+                types.map(async (type) => {
+                    const blob = (await item.getType(type)) as Blob;
+                    return [type, type.startsWith("text/") ? await blob.text() : blob] as const;
+                })
+            );
+            return Object.fromEntries(entries);
+        })
+    );
+}
+
 // Colle un texte sans toucher au presse-papiers : son contenu est remis juste après le collage.
 // onPasted est appelé dès que Cmd+V est envoyé, avant l'attente de remise du presse-papiers
 async function pasteText(text: string, onPasted?: () => void) {
-    const saved = { text: clipboard.readText(), html: clipboard.readHTML(), rtf: clipboard.readRTF(), image: clipboard.readImage() };
-    clipboard.writeText(text);
+    const saved = (await saveClipboard()).filter((item) => Object.keys(item).length > 0);
+    await clipboard.writeText(text);
     try {
         await pasteAtCursor();
         onPasted?.();
         await wait(CLIPBOARD_RESTORE_DELAY_MS);
     } finally {
-        const restored = Object.fromEntries(Object.entries(saved).filter(([, value]) => (typeof value === "string" ? value : !value.isEmpty())));
-        if (Object.keys(restored).length > 0) clipboard.write(restored);
+        if (saved.length > 0) await clipboard.write(saved.map((item) => new ClipboardItem(item)));
         else clipboard.clear();
     }
 }
@@ -457,13 +489,17 @@ ipcMain.handle("delete-meeting", (_event, id) => meetings.remove(id));
 ipcMain.handle("get-meeting-audio", (_event, id) => meetings.audio(id));
 ipcMain.handle("get-dictation-language", () => readSettings().dictationLanguage ?? DEFAULT_DICTATION_LANGUAGE);
 ipcMain.handle("set-dictation-language", (_event, language) => updateSettings({ dictationLanguage: language }));
+ipcMain.handle("get-fast-dictation", () => readSettings().fastDictation ?? false);
+ipcMain.handle("set-fast-dictation", (_event, enabled) => updateSettings({ fastDictation: enabled }));
 ipcMain.handle("get-correction-instructions", () => readSettings().correctionInstructions ?? "");
 ipcMain.handle("set-correction-instructions", (_event, instructions) => updateSettings({ correctionInstructions: instructions }));
+// Croix du rond de chargement de la dictée : la transcription est abandonnée, rien n'est collé
+ipcMain.on("overlay-cancel", () => dictation?.cancel());
 
 app.whenReady().then(() => {
     // Lancée avec `electron .`, l'app afficherait l'icône d'Electron dans le Dock (Sténo.app a la sienne)
     if (process.platform === "darwin" && !app.isPackaged) {
-        app.dock.setIcon(path.join(app.getAppPath(), "brand", "icon", "png", "steno-icon-1024.png"));
+        app.dock?.setIcon(path.join(app.getAppPath(), "brand", "icon", "png", "steno-icon-1024.png"));
     }
 
     createOverlay();
@@ -503,8 +539,10 @@ app.whenReady().then(() => {
     // Dictée : Option droite + Cmd droite maintenues, puis le texte est collé à la place du curseur quand on les relâche
     dictation = watchDictation({
         model: dictationModel,
+        fastModel: fastDictationModel,
         getPhrases: readDictionary,
         getLanguage: () => readSettings().dictationLanguage ?? DEFAULT_DICTATION_LANGUAGE,
+        isFastMode: () => readSettings().fastDictation ?? false,
         // Jamais en même temps qu'une correction Cmd+O
         tryBegin: () => !busy && (busy = true),
         end: () => (busy = false),
@@ -512,7 +550,7 @@ app.whenReady().then(() => {
         hideOverlay,
         setOverlayLevel,
         pasteText,
-        onDictation: ({ text, durationMs, audioDurationSec, cost }) =>
+        onDictation: ({ text, durationMs, audioDurationSec, cost, fastMode }) =>
             addToHistory({
                 id: Date.now().toString(36),
                 source: "dictation",
@@ -521,9 +559,10 @@ app.whenReady().then(() => {
                 corrected: text,
                 durationMs,
                 audioDurationSec,
-                model: dictationModel,
+                model: fastMode === "ok" ? fastDictationModel : dictationModel,
                 cost,
-                costStatus: cost === null ? "unavailable" : "exact",
+                costStatus: cost === null ? "unavailable" : fastMode === "ok" ? "estimated" : "exact",
+                fastMode,
             }),
     });
 
@@ -536,7 +575,7 @@ app.whenReady().then(() => {
         // Ignore le raccourci si une correction est déjà en cours
         if (busy) return;
 
-        const clipboardText = clipboard.readText();
+        const clipboardText = await clipboard.readText();
         if (!clipboardText.trim()) return;
 
         busy = true;
@@ -545,7 +584,7 @@ app.whenReady().then(() => {
 
         try {
             const correction = await correctText(clipboardText);
-            clipboard.writeText(correction.text);
+            await clipboard.writeText(correction.text);
 
             if (process.platform === "darwin") {
                 await pasteAtCursor();
